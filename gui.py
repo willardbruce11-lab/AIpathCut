@@ -227,28 +227,34 @@ class OutlineApp:
         )
         status_bar.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
 
-        # 绑定拖放事件（macOS 支持）
+        # 绑定拖放事件（支持 Windows/macOS/Linux）
         self._setup_drag_drop()
 
     def _setup_drag_drop(self):
-        """设置拖放支持"""
+        """设置拖放支持（Windows/macOS/Linux 通用）"""
         try:
-            # macOS 拖放支持
-            from AppKit import NSPasteboard
             import tkinterdnd2 as tkdnd
             self.root.drop_target_register(tkdnd.DND_FILES)
             self.root.dnd_bind('<<Drop>>', self._on_drop)
             self.root.dnd_bind('<<DragEnter>>', self._on_drag_enter)
             self.root.dnd_bind('<<DragLeave>>', self._on_drag_leave)
         except ImportError:
-            # 如果没有 tkinterdnd2，使用备用方案
+            # 如果没有 tkinterdnd2，点击选择文件仍然可用
             pass
 
     def _on_drop(self, event):
-        """处理拖放事件"""
+        """处理拖放事件（支持 Windows/macOS/Linux 路径格式）"""
         files = self.root.tk.splitlist(event.data)
         if files:
-            self._load_image(files[0])
+            filepath = files[0]
+            # Windows 可能返回 {file:///C:/path} 格式，需要处理
+            if filepath.startswith('{') and filepath.endswith('}'):
+                filepath = filepath[1:-1]
+            if filepath.startswith('file:///'):
+                filepath = filepath[8:]
+            if filepath.startswith('file://'):
+                filepath = filepath[7:]
+            self._load_image(filepath)
 
     def _on_drag_enter(self, event):
         """拖入时高亮"""
@@ -452,7 +458,12 @@ class OutlineApp:
 
 
 def main():
-    root = tk.Tk()
+    # Windows/macOS/Linux 拖放支持需要使用 TkinterDnD
+    try:
+        from tkinterdnd2 import Tk as DnDTk
+        root = DnDTk()
+    except ImportError:
+        root = tk.Tk()
     app = OutlineApp(root)
     root.mainloop()
 
