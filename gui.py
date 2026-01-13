@@ -10,6 +10,9 @@ import cv2
 import numpy as np
 from pathlib import Path
 import threading
+import os
+import subprocess
+import time
 
 from outline_extractor import OutlineExtractor
 from svg_generator import SVGGenerator
@@ -52,6 +55,7 @@ class OutlineApp:
         self.processed_contours = None  # 原始轮廓（未偏移）
         self.original_width = 0
         self.original_height = 0
+        self.last_gcode_path = None  # 记录上次保存的G-code文件路径
 
         self.extractor = OutlineExtractor(mode="grabcut")
         self.generator = SVGGenerator()
@@ -123,8 +127,9 @@ class OutlineApp:
 
         # 参数控制
         params_frame = ttk.LabelFrame(control_panel, text="参数设置", padding="10")
-        params_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        params_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
 
+        # ===== 第一行：白色阈值 + 偏移距离 =====
         # 白色阈值
         ttk.Label(params_frame, text="白色阈值:").grid(row=0, column=0, padx=(0, 5), sticky=tk.W)
         self.threshold_var = tk.IntVar(value=230)
@@ -136,10 +141,10 @@ class OutlineApp:
         )
         threshold_scale.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
         self.threshold_label = ttk.Label(params_frame, text="230", width=5)
-        self.threshold_label.grid(row=0, column=2, padx=(0, 15))
+        self.threshold_label.grid(row=0, column=2, padx=(0, 20))
 
         # 偏移距离（用于切割补偿）
-        ttk.Label(params_frame, text="偏移距离:").grid(row=0, column=3, padx=(5, 5), sticky=tk.W)
+        ttk.Label(params_frame, text="偏移距离:").grid(row=0, column=3, padx=(0, 5), sticky=tk.W)
         self.offset_var = tk.DoubleVar(value=0.0)
         offset_scale = ttk.Scale(
             params_frame,
@@ -151,34 +156,41 @@ class OutlineApp:
         self.offset_label = ttk.Label(params_frame, text="0.0", width=5)
         self.offset_label.grid(row=0, column=5, padx=(0, 5))
         # 偏移说明
-        ttk.Label(params_frame, text="(正值外扩, 负值内缩)", font=("", 8)).grid(row=0, column=6, padx=(0, 5))
-
-        # G代码参数 - 分隔线
-        ttk.Separator(params_frame, orient=tk.VERTICAL).grid(row=0, column=7, sticky="ns", padx=10)
-
-        # 目标宽度
-        ttk.Label(params_frame, text="目标宽度:").grid(row=0, column=8, padx=(0, 5), sticky=tk.W)
-        self.target_width_var = tk.DoubleVar(value=200.0)
-        target_width_entry = ttk.Entry(params_frame, textvariable=self.target_width_var, width=8)
-        target_width_entry.grid(row=0, column=9, padx=2)
-        ttk.Label(params_frame, text="mm", font=("", 9)).grid(row=0, column=10, padx=(0, 5))
-
-        # 目标高度
-        ttk.Label(params_frame, text="目标高度:").grid(row=0, column=11, padx=(0, 5), sticky=tk.W)
-        self.target_height_var = tk.DoubleVar(value=200.0)
-        target_height_entry = ttk.Entry(params_frame, textvariable=self.target_height_var, width=8)
-        target_height_entry.grid(row=0, column=12, padx=2)
-        ttk.Label(params_frame, text="mm", font=("", 9)).grid(row=0, column=13, padx=(0, 10))
-
-        # 进给速度
-        ttk.Label(params_frame, text="进给速度:").grid(row=0, column=14, padx=(0, 5), sticky=tk.W)
-        self.gcode_feed_var = tk.IntVar(value=1000)
-        gcode_feed_entry = ttk.Entry(params_frame, textvariable=self.gcode_feed_var, width=8)
-        gcode_feed_entry.grid(row=0, column=15, padx=2)
-        ttk.Label(params_frame, text="mm/min", font=("", 9)).grid(row=0, column=16, padx=(0, 5))
+        ttk.Label(params_frame, text="(正值外扩,负值内缩)", font=("", 8)).grid(row=0, column=6, sticky=tk.W)
 
         params_frame.columnconfigure(1, weight=1)
         params_frame.columnconfigure(4, weight=1)
+
+        # ===== 第二行：G代码参数 =====
+        # 加工宽度（X轴）
+        ttk.Label(params_frame, text="加工宽:").grid(row=1, column=0, padx=(0, 5), sticky=tk.W, pady=(8, 0))
+        self.target_width_var = tk.DoubleVar(value=200.0)
+        target_width_entry = ttk.Entry(params_frame, textvariable=self.target_width_var, width=8)
+        target_width_entry.grid(row=1, column=1, padx=2, pady=(8, 0), sticky=tk.W)
+        ttk.Label(params_frame, text="mm", font=("", 9)).grid(row=1, column=2, padx=(0, 20), pady=(8, 0))
+
+        # 加工高度（Y轴）
+        ttk.Label(params_frame, text="加工高:").grid(row=1, column=3, padx=(0, 5), sticky=tk.W, pady=(8, 0))
+        self.target_height_var = tk.DoubleVar(value=200.0)
+        target_height_entry = ttk.Entry(params_frame, textvariable=self.target_height_var, width=8)
+        target_height_entry.grid(row=1, column=4, padx=2, pady=(8, 0), sticky=tk.W)
+        ttk.Label(params_frame, text="mm", font=("", 9)).grid(row=1, column=5, padx=(0, 5), pady=(8, 0))
+
+        # 进给速度
+        ttk.Label(params_frame, text="进给:").grid(row=1, column=6, padx=(0, 5), sticky=tk.W, pady=(8, 0))
+        self.gcode_feed_var = tk.IntVar(value=1000)
+        gcode_feed_entry = ttk.Entry(params_frame, textvariable=self.gcode_feed_var, width=8)
+        gcode_feed_entry.grid(row=1, column=7, padx=2, pady=(8, 0), sticky=tk.W)
+        ttk.Label(params_frame, text="mm/min", font=("", 9)).grid(row=1, column=8, padx=(0, 10), pady=(8, 0))
+        # 等比说明
+        tk.Label(params_frame, text="(等比缩放)", font=("", 8), fg="gray").grid(row=1, column=9, sticky=tk.W, pady=(8, 0))
+
+        # ===== 第三行：UGS路径配置 =====
+        ttk.Label(params_frame, text="UGS路径:").grid(row=2, column=0, padx=(0, 5), sticky=tk.W, pady=(8, 0))
+        self.ugs_path_var = tk.StringVar(value="")
+        ugs_path_entry = ttk.Entry(params_frame, textvariable=self.ugs_path_var)
+        ugs_path_entry.grid(row=2, column=1, columnspan=8, sticky=(tk.W, tk.E), padx=2, pady=(8, 0))
+        ttk.Button(params_frame, text="浏览...", width=8, command=self._browse_ugs_path).grid(row=2, column=9, padx=(5, 0), pady=(8, 0))
 
         # 按钮面板
         button_frame = ttk.Frame(control_panel)
@@ -211,6 +223,20 @@ class OutlineApp:
             cursor="hand2"
         )
         self.gcode_btn.pack(side=tk.LEFT, padx=5)
+
+        self.cut_btn = tk.Button(
+            button_frame,
+            text="开始切割",
+            command=self._start_cutting,
+            bg="#FF5722",
+            fg="white",
+            font=("", 12, "bold"),
+            width=14,
+            state=tk.DISABLED,
+            relief="raised",
+            cursor="hand2"
+        )
+        self.cut_btn.pack(side=tk.LEFT, padx=5)
 
         ttk.Button(
             button_frame,
@@ -297,9 +323,10 @@ class OutlineApp:
             )
             self.processed_contours = None
 
-            # 启用处理按钮，禁用G代码按钮
+            # 启用处理按钮，禁用G代码和切割按钮
             self.process_btn.config(state=tk.NORMAL, bg="#4CAF50")
             self.gcode_btn.config(state=tk.DISABLED, bg="#cccccc")
+            self.cut_btn.config(state=tk.DISABLED, bg="#cccccc")
 
         except Exception as e:
             self.status_var.set(f"加载失败: {e}")
@@ -350,6 +377,7 @@ class OutlineApp:
         self._render_preview()
         self.process_btn.config(state=tk.NORMAL, bg="#4CAF50")
         self.gcode_btn.config(state=tk.NORMAL, bg="#2196F3")
+        self.cut_btn.config(state=tk.NORMAL, bg="#FF5722")
 
     def _update_preview_offset(self):
         """只更新偏移距离，不重新提取轮廓"""
@@ -494,8 +522,111 @@ class OutlineApp:
                     target_height
                 )
                 self.status_var.set(f"已保存: {Path(filepath).name} (缩放到 {target_width}x{target_height}mm)")
+                # 记录文件路径，供"开始切割"使用
+                self.last_gcode_path = filepath
             except Exception as e:
                 self.status_var.set(f"保存失败: {e}")
+
+    def _browse_ugs_path(self):
+        """浏览选择UGS可执行文件"""
+        filepath = filedialog.askopenfilename(
+            title="选择Universal Gcode Sender",
+            filetypes=[
+                ("可执行文件", "*.exe"),
+                ("JAR文件", "*.jar"),
+                ("快捷方式", "*.lnk"),
+                ("所有文件", "*.*")
+            ]
+        )
+        if filepath:
+            self.ugs_path_var.set(filepath)
+
+    def _close_ugs_process(self):
+        """关闭已运行的UGS进程"""
+        try:
+            # 常见的UGS进程名
+            ugs_process_names = [
+                'UniversalGcodeSender.exe',
+                'ugs-platform.exe',
+                'UniversalGcodeSender',
+                'java'  # JAR版本运行在java进程下
+            ]
+
+            for proc_name in ugs_process_names:
+                try:
+                    subprocess.run(['taskkill', '/F', '/IM', proc_name],
+                                   shell=True, check=False,
+                                   stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _start_cutting(self):
+        """启动UGS并加载G-code"""
+        if not self.processed_contours:
+            self.status_var.set("没有可处理的轮廓")
+            return
+
+        # 确定要使用的G-code文件路径
+        if self.last_gcode_path and os.path.exists(os.path.dirname(self.last_gcode_path)):
+            # 使用上次保存的文件名
+            gcode_path = self.last_gcode_path
+        else:
+            # 没有保存过，使用临时文件名
+            gcode_path = "temp_cut.gcode"
+
+        ugs_path = self.ugs_path_var.get().strip()
+        if not ugs_path:
+            self.status_var.set("请先配置UGS路径")
+            return
+
+        if not os.path.exists(ugs_path):
+            self.status_var.set(f"UGS路径不存在: {ugs_path}")
+            return
+
+        try:
+            # 获取参数并生成G-code（覆盖原有文件）
+            target_width = float(self.target_width_var.get())
+            target_height = float(self.target_height_var.get())
+            feed_rate = int(self.gcode_feed_var.get())
+            offset_distance = self.offset_var.get()
+
+            contours = self.extractor.offset_contours(self.processed_contours, offset_distance)
+
+            self.gcode_gen.feed_rate = feed_rate
+            self.gcode_gen.save_to_file(
+                contours, gcode_path,
+                self.original_width, self.original_height,
+                target_width, target_height
+            )
+
+            # 获取G-code文件的绝对路径
+            gcode_abs_path = os.path.abspath(gcode_path)
+
+            # 先关闭已运行的UGS进程
+            self._close_ugs_process()
+            # 等待进程完全关闭
+            time.sleep(0.5)
+
+            # 启动UGS并加载文件
+            if ugs_path.lower().endswith('.jar'):
+                # JAR版本
+                subprocess.Popen(['java', '-jar', ugs_path, gcode_abs_path], shell=False)
+                self.status_var.set(f"已启动UGS并加载: {Path(gcode_path).name}")
+            elif ugs_path.lower().endswith('.lnk'):
+                # 快捷方式 - 复制路径到剪贴板
+                subprocess.run(['clip.exe'], input=gcode_abs_path, text=True, shell=True, check=False)
+                os.startfile(ugs_path)
+                self.status_var.set(f"UGS已启动，文件路径已复制到剪贴板，按Ctrl+V粘贴加载")
+            else:
+                # EXE版本 - 大多数UGS支持直接传文件路径作为参数
+                subprocess.Popen([ugs_path, gcode_abs_path], shell=False)
+                self.status_var.set(f"已启动UGS并加载: {Path(gcode_path).name}")
+
+        except Exception as e:
+            self.status_var.set(f"启动失败: {e}")
 
 
 def main():
