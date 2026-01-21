@@ -136,9 +136,15 @@ class GCodeGenerator:
             gcode_lines.append("; XZ轴交换模式: X→Z, Y→Y, Z→X")
         gcode_lines.append(f"; Feed rate: {self.feed_rate} mm/min")
         gcode_lines.append("; ---")
-        gcode_lines.append("G21 ; Set units to millimeters")
-        gcode_lines.append("G90 ; Absolute positioning")
-        gcode_lines.append(f"G1 F{self.feed_rate} ; Set feed rate")
+        gcode_lines.append("G21         ; 使用毫米单位")
+        gcode_lines.append("G90         ; 绝对坐标模式")
+        gcode_lines.append(f"F{self.feed_rate}        ; 设置速度{self.feed_rate}mm/min")
+        gcode_lines.append("")
+        gcode_lines.append("; 从原点开始")
+        gcode_lines.append("G0 X0 Y0")
+        gcode_lines.append("")
+        gcode_lines.append("; 进纸，刀头到纸张中心位置")
+        gcode_lines.append("G1 X-7 Y4")
         gcode_lines.append("")
 
         # 为每个轮廓生成路径
@@ -188,8 +194,12 @@ class GCodeGenerator:
             gcode_lines.append("")
 
         # G代码尾部
-        gcode_lines.append("; ---")
-        gcode_lines.append("M30 ; End of program")
+        gcode_lines.append("")
+        gcode_lines.append("; 出纸，刀头归位")
+        gcode_lines.append("G1 X-20 Y0        ; → (-18.5, 0)")
+        gcode_lines.append("")
+        gcode_lines.append("; 归零")
+        gcode_lines.append("G0 X0 Y0")
 
         return "\n".join(gcode_lines)
 
