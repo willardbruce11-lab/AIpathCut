@@ -17,6 +17,7 @@ import time
 from outline_extractor import OutlineExtractor
 from svg_generator import SVGGenerator
 from gcode_generator import GCodeGenerator
+from fill_generator import FillGenerator
 
 
 class ImageDropLabel(tk.Label):
@@ -49,17 +50,19 @@ class OutlineApp:
     def __init__(self, root):
         self.root = root
         self.root.title("描边提取工具")
-        self.root.geometry("1200x700")
+        self.root.geometry("1300x800")
 
         self.current_image_path = None
         self.processed_contours = None  # 原始轮廓（未偏移）
         self.original_width = 0
         self.original_height = 0
         self.last_gcode_path = None  # 记录上次保存的G-code文件路径
+        self.last_fill_gcode_path = None  # 记录填充G-code文件路径
 
         self.extractor = OutlineExtractor(mode="grabcut")
         self.generator = SVGGenerator()
         self.gcode_gen = GCodeGenerator()
+        self.fill_gen = FillGenerator()
 
         self._setup_ui()
 
@@ -192,6 +195,35 @@ class OutlineApp:
         ugs_path_entry.grid(row=2, column=1, columnspan=8, sticky=(tk.W, tk.E), padx=2, pady=(8, 0))
         ttk.Button(params_frame, text="浏览...", width=8, command=self._browse_ugs_path).grid(row=2, column=9, padx=(5, 0), pady=(8, 0))
 
+        # ===== 第四行：填充参数 =====
+        ttk.Label(params_frame, text="填充间隔:").grid(row=3, column=0, padx=(0, 5), sticky=tk.W, pady=(8, 0))
+        self.fill_interval_var = tk.DoubleVar(value=5.0)
+        fill_interval_entry = ttk.Entry(params_frame, textvariable=self.fill_interval_var, width=8)
+        fill_interval_entry.grid(row=3, column=1, sticky=tk.W, padx=2, pady=(8, 0))
+        ttk.Label(params_frame, text="mm", font=("", 9)).grid(row=3, column=2, sticky=tk.W, pady=(8, 0))
+
+        ttk.Label(params_frame, text="Y偏移:").grid(row=3, column=3, padx=(0, 5), sticky=tk.W, pady=(8, 0))
+        self.y_offset_var = tk.DoubleVar(value=5.0)
+        fill_offset_entry = ttk.Entry(params_frame, textvariable=self.y_offset_var, width=8)
+        fill_offset_entry.grid(row=3, column=4, sticky=tk.W, padx=2, pady=(8, 0))
+        ttk.Label(params_frame, text="mm", font=("", 9)).grid(row=3, column=5, sticky=tk.W, pady=(8, 0))
+
+        ttk.Label(params_frame, text="Z深度:").grid(row=3, column=6, padx=(0, 5), sticky=tk.W, pady=(8, 0))
+        self.fill_z_depth_var = tk.DoubleVar(value=-2.0)
+        fill_z_depth_entry = ttk.Entry(params_frame, textvariable=self.fill_z_depth_var, width=8)
+        fill_z_depth_entry.grid(row=3, column=7, sticky=tk.W, padx=2, pady=(8, 0))
+        ttk.Label(params_frame, text="mm", font=("", 9)).grid(row=3, column=8, sticky=tk.W, pady=(8, 0))
+        tk.Label(params_frame, text="(UV扫描)", font=("", 8), fg="#9C27B0").grid(row=3, column=9, sticky=tk.W, pady=(8, 0))
+
+        # ===== 第五行：XZ轴交换选项 =====
+        self.swap_xz_var = tk.BooleanVar(value=False)
+        swap_xz_check = ttk.Checkbutton(
+            params_frame,
+            text="XZ轴交换 (X→Z, Z→X)",
+            variable=self.swap_xz_var
+        )
+        swap_xz_check.grid(row=4, column=0, columnspan=10, sticky=tk.W, pady=(8, 0))
+
         # 按钮面板
         button_frame = ttk.Frame(control_panel)
         button_frame.pack(side=tk.LEFT)
@@ -237,6 +269,34 @@ class OutlineApp:
             cursor="hand2"
         )
         self.cut_btn.pack(side=tk.LEFT, padx=5)
+
+        self.fill_gcode_btn = tk.Button(
+            button_frame,
+            text="生成填充G代码",
+            command=self._save_fill_gcode,
+            bg="#9C27B0",
+            fg="white",
+            font=("", 11, "bold"),
+            width=14,
+            state=tk.DISABLED,
+            relief="raised",
+            cursor="hand2"
+        )
+        self.fill_gcode_btn.pack(side=tk.LEFT, padx=5)
+
+        self.fill_btn = tk.Button(
+            button_frame,
+            text="开始填充",
+            command=self._start_fill,
+            bg="#E91E63",
+            fg="white",
+            font=("", 11, "bold"),
+            width=10,
+            state=tk.DISABLED,
+            relief="raised",
+            cursor="hand2"
+        )
+        self.fill_btn.pack(side=tk.LEFT, padx=5)
 
         ttk.Button(
             button_frame,
@@ -323,10 +383,12 @@ class OutlineApp:
             )
             self.processed_contours = None
 
-            # 启用处理按钮，禁用G代码和切割按钮
+            # 启用处理按钮，禁用G代码、切割和填充按钮
             self.process_btn.config(state=tk.NORMAL, bg="#4CAF50")
             self.gcode_btn.config(state=tk.DISABLED, bg="#cccccc")
             self.cut_btn.config(state=tk.DISABLED, bg="#cccccc")
+            self.fill_gcode_btn.config(state=tk.DISABLED, bg="#cccccc")
+            self.fill_btn.config(state=tk.DISABLED, bg="#cccccc")
 
         except Exception as e:
             self.status_var.set(f"加载失败: {e}")
@@ -378,6 +440,8 @@ class OutlineApp:
         self.process_btn.config(state=tk.NORMAL, bg="#4CAF50")
         self.gcode_btn.config(state=tk.NORMAL, bg="#2196F3")
         self.cut_btn.config(state=tk.NORMAL, bg="#FF5722")
+        self.fill_gcode_btn.config(state=tk.NORMAL, bg="#9C27B0")
+        self.fill_btn.config(state=tk.NORMAL, bg="#E91E63")
 
     def _update_preview_offset(self):
         """只更新偏移距离，不重新提取轮廓"""
@@ -519,7 +583,8 @@ class OutlineApp:
                     self.original_width,
                     self.original_height,
                     target_width,
-                    target_height
+                    target_height,
+                    self.swap_xz_var.get()
                 )
                 self.status_var.set(f"已保存: {Path(filepath).name} (缩放到 {target_width}x{target_height}mm)")
                 # 记录文件路径，供"开始切割"使用
@@ -599,7 +664,8 @@ class OutlineApp:
             self.gcode_gen.save_to_file(
                 contours, gcode_path,
                 self.original_width, self.original_height,
-                target_width, target_height
+                target_width, target_height,
+                self.swap_xz_var.get()
             )
 
             # 获取G-code文件的绝对路径
@@ -624,6 +690,108 @@ class OutlineApp:
                 # EXE版本 - 大多数UGS支持直接传文件路径作为参数
                 subprocess.Popen([ugs_path, gcode_abs_path], shell=False)
                 self.status_var.set(f"已启动UGS并加载: {Path(gcode_path).name}")
+
+        except Exception as e:
+            self.status_var.set(f"启动失败: {e}")
+
+    def _save_fill_gcode(self):
+        """生成并保存填充G代码文件"""
+        if not self.processed_contours:
+            self.status_var.set("没有可处理的轮廓")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            title="保存填充G代码",
+            defaultextension="_fill.gcode",
+            filetypes=[
+                ("G 代码文件", "*.gcode"),
+                ("所有文件", "*.*")
+            ]
+        )
+
+        if filepath:
+            try:
+                fill_interval = float(self.fill_interval_var.get())
+                y_offset = float(self.y_offset_var.get())
+                z_depth = float(self.fill_z_depth_var.get())
+
+                if fill_interval <= 0:
+                    self.status_var.set("参数错误: 间隔必须大于0")
+                    return
+
+                offset_distance = self.offset_var.get()
+                contours = self.extractor.offset_contours(self.processed_contours, offset_distance)
+
+                self.fill_gen.feed_rate = int(self.gcode_feed_var.get())
+                self.fill_gen.save_to_file(
+                    contours, filepath, fill_interval, y_offset, z_depth,
+                    self.original_width, self.original_height,
+                    float(self.target_width_var.get()),
+                    float(self.target_height_var.get()),
+                    self.swap_xz_var.get()
+                )
+
+                self.last_fill_gcode_path = filepath
+                self.status_var.set(f"填充G-code已保存: {Path(filepath).name}")
+            except Exception as e:
+                self.status_var.set(f"保存失败: {e}")
+
+    def _start_fill(self):
+        """启动UGS并加载填充G-code"""
+        if not self.processed_contours:
+            self.status_var.set("没有可处理的轮廓")
+            return
+
+        # 确定填充G-code文件路径
+        if self.last_fill_gcode_path:
+            gcode_path = self.last_fill_gcode_path
+        else:
+            # 如果没有保存过，先用默认路径生成
+            gcode_path = "temp_fill.gcode"
+            try:
+                fill_interval = float(self.fill_interval_var.get())
+                y_offset = float(self.y_offset_var.get())
+                z_depth = float(self.fill_z_depth_var.get())
+                offset_distance = self.offset_var.get()
+                contours = self.extractor.offset_contours(self.processed_contours, offset_distance)
+
+                self.fill_gen.feed_rate = int(self.gcode_feed_var.get())
+                self.fill_gen.save_to_file(
+                    contours, gcode_path, fill_interval, y_offset, z_depth,
+                    self.original_width, self.original_height,
+                    float(self.target_width_var.get()),
+                    float(self.target_height_var.get()),
+                    self.swap_xz_var.get()
+                )
+            except Exception as e:
+                self.status_var.set(f"生成失败: {e}")
+                return
+
+        ugs_path = self.ugs_path_var.get().strip()
+        if not ugs_path:
+            self.status_var.set("请先配置UGS路径")
+            return
+
+        if not os.path.exists(ugs_path):
+            self.status_var.set(f"UGS路径不存在: {ugs_path}")
+            return
+
+        try:
+            gcode_abs_path = os.path.abspath(gcode_path)
+
+            self._close_ugs_process()
+            time.sleep(0.5)
+
+            if ugs_path.lower().endswith('.jar'):
+                subprocess.Popen(['java', '-jar', ugs_path, gcode_abs_path], shell=False)
+            elif ugs_path.lower().endswith('.lnk'):
+                subprocess.run(['clip.exe'], input=gcode_abs_path, text=True, shell=True, check=False)
+                os.startfile(ugs_path)
+                self.status_var.set(f"UGS已启动，文件路径已复制到剪贴板")
+            else:
+                subprocess.Popen([ugs_path, gcode_abs_path], shell=False)
+
+            self.status_var.set(f"已启动UGS并加载填充: {Path(gcode_path).name}")
 
         except Exception as e:
             self.status_var.set(f"启动失败: {e}")

@@ -1,6 +1,7 @@
 """
 G代码生成模块
 将轮廓数据转换为G代码格式，支持自动缩放到指定尺寸
+支持XZ轴交换（X→Z, Y→Y, Z→X）
 """
 
 
@@ -78,7 +79,7 @@ class GCodeGenerator:
         return scale, offset_x, offset_y
 
     def generate(self, contours, image_width=0, image_height=0,
-                 target_width=0, target_height=0):
+                 target_width=0, target_height=0, swap_xz=False):
         """
         生成G代码
 
@@ -88,6 +89,7 @@ class GCodeGenerator:
             image_height: 图像高度(像素)
             target_width: 目标宽度(mm)，为0时使用原始比例(1像素=1毫米)
             target_height: 目标高度(mm)，为0时使用原始比例
+            swap_xz: 是否交换X轴和Z轴（X→Z, Y→Y, Z→X）
 
         Returns:
             str: G代码字符串
@@ -102,18 +104,11 @@ class GCodeGenerator:
             scale, offset_x, offset_y = self._calculate_scale_and_offset(
                 contours, target_width, target_height
             )
-            # Y轴不需要翻转（G代码坐标系Y轴向上，图像坐标系Y轴向下）
-            # 但为了保持与原来的一致性，我们计算时不翻转，输出时也不翻转
-            y_flip = 1
         else:
             # 原始模式：使用像素直接作为毫米单位
             scale = 1.0
             offset_x = 0
             offset_y = 0
-            y_flip = 1
-            if image_height > 0:
-                # 原始模式下Y轴翻转
-                y_flip = -1
 
         # 获取轮廓边界（用于注释）
         min_x, max_x, min_y, max_y = self._get_contours_bounds(contours)
@@ -137,6 +132,8 @@ class GCodeGenerator:
             gcode_lines.append(f"; Original image size: {image_width} x {image_height} pixels")
             gcode_lines.append(f"; Output size: {image_width} x {image_height} mm (1:1)")
 
+        if swap_xz:
+            gcode_lines.append("; XZ轴交换模式: X→Z, Y→Y, Z→X")
         gcode_lines.append(f"; Feed rate: {self.feed_rate} mm/min")
         gcode_lines.append("; ---")
         gcode_lines.append("G21 ; Set units to millimeters")
@@ -162,7 +159,11 @@ class GCodeGenerator:
                 x = start[0]
                 y = (image_height - start[1]) if image_height > 0 else start[1]
 
-            gcode_lines.append(f"G0 X{x:.3f} Y{y:.3f} ; Move to start")
+            if swap_xz:
+                # XZ交换：X→Z, Y→Y, Z→X
+                gcode_lines.append(f"G0 Y{y:.3f} Z{x:.3f} ; Move to start")
+            else:
+                gcode_lines.append(f"G0 X{x:.3f} Y{y:.3f} ; Move to start")
 
             # 生成路径点
             for point in contour[1:]:
@@ -172,10 +173,18 @@ class GCodeGenerator:
                 else:
                     px = point[0][0]
                     py = (image_height - point[0][1]) if image_height > 0 else point[0][1]
-                gcode_lines.append(f"G1 X{px:.3f} Y{py:.3f}")
+
+                if swap_xz:
+                    # XZ交换：X→Z, Y→Y, Z→X
+                    gcode_lines.append(f"G1 Y{py:.3f} Z{px:.3f}")
+                else:
+                    gcode_lines.append(f"G1 X{px:.3f} Y{py:.3f}")
 
             # 闭合路径
-            gcode_lines.append(f"G1 X{x:.3f} Y{y:.3f} ; Close contour")
+            if swap_xz:
+                gcode_lines.append(f"G1 Y{y:.3f} Z{x:.3f} ; Close contour")
+            else:
+                gcode_lines.append(f"G1 X{x:.3f} Y{y:.3f} ; Close contour")
             gcode_lines.append("")
 
         # G代码尾部
@@ -185,7 +194,7 @@ class GCodeGenerator:
         return "\n".join(gcode_lines)
 
     def save_to_file(self, contours, filepath, image_width=0, image_height=0,
-                     target_width=0, target_height=0):
+                     target_width=0, target_height=0, swap_xz=False):
         """
         生成G代码并保存到文件
 
@@ -196,13 +205,14 @@ class GCodeGenerator:
             image_height: 图像高度(像素)
             target_width: 目标宽度(mm)
             target_height: 目标高度(mm)
+            swap_xz: 是否交换X轴和Z轴（X→Z, Y→Y, Z→X）
 
         Returns:
             bool: 是否保存成功
         """
         try:
             gcode = self.generate(contours, image_width, image_height,
-                                 target_width, target_height)
+                                 target_width, target_height, swap_xz)
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(gcode)
             return True
