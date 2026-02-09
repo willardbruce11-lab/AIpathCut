@@ -126,11 +126,14 @@ class OutlineApp:
 
         # 底部控制面板
         control_panel = ttk.Frame(main_frame)
-        control_panel.grid(row=2, column=0, columnspan=3, pady=(15, 0))
+        control_panel.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(15, 0))
+        control_panel.columnconfigure(0, weight=0)  # 参数区域固定宽度
+        control_panel.columnconfigure(1, weight=0)  # 执行操作区域固定宽度
+        control_panel.rowconfigure(0, weight=1)  # 允许垂直扩展
 
         # 参数控制
         params_frame = ttk.LabelFrame(control_panel, text="参数设置", padding="10")
-        params_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        params_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # ===== 第一行：白色阈值 + 偏移距离 =====
         # 白色阈值
@@ -167,21 +170,21 @@ class OutlineApp:
         # ===== 第二行：G代码参数 =====
         # 加工宽度（X轴）
         ttk.Label(params_frame, text="加工宽:").grid(row=1, column=0, padx=(0, 5), sticky=tk.W, pady=(8, 0))
-        self.target_width_var = tk.DoubleVar(value=200.0)
+        self.target_width_var = tk.DoubleVar(value=50.0)
         target_width_entry = ttk.Entry(params_frame, textvariable=self.target_width_var, width=8)
         target_width_entry.grid(row=1, column=1, padx=2, pady=(8, 0), sticky=tk.W)
         ttk.Label(params_frame, text="mm", font=("", 9)).grid(row=1, column=2, padx=(0, 20), pady=(8, 0))
 
         # 加工高度（Y轴）
         ttk.Label(params_frame, text="加工高:").grid(row=1, column=3, padx=(0, 5), sticky=tk.W, pady=(8, 0))
-        self.target_height_var = tk.DoubleVar(value=200.0)
+        self.target_height_var = tk.DoubleVar(value=76.0)
         target_height_entry = ttk.Entry(params_frame, textvariable=self.target_height_var, width=8)
         target_height_entry.grid(row=1, column=4, padx=2, pady=(8, 0), sticky=tk.W)
         ttk.Label(params_frame, text="mm", font=("", 9)).grid(row=1, column=5, padx=(0, 5), pady=(8, 0))
 
         # 进给速度
         ttk.Label(params_frame, text="进给:").grid(row=1, column=6, padx=(0, 5), sticky=tk.W, pady=(8, 0))
-        self.gcode_feed_var = tk.IntVar(value=1000)
+        self.gcode_feed_var = tk.IntVar(value=100)
         gcode_feed_entry = ttk.Entry(params_frame, textvariable=self.gcode_feed_var, width=8)
         gcode_feed_entry.grid(row=1, column=7, padx=2, pady=(8, 0), sticky=tk.W)
         ttk.Label(params_frame, text="mm/min", font=("", 9)).grid(row=1, column=8, padx=(0, 10), pady=(8, 0))
@@ -224,18 +227,38 @@ class OutlineApp:
         )
         swap_xz_check.grid(row=4, column=0, columnspan=10, sticky=tk.W, pady=(8, 0))
 
-        # 按钮面板
-        button_frame = ttk.Frame(control_panel)
-        button_frame.pack(side=tk.LEFT)
+        # 按钮和Logo容器
+        button_container = ttk.Frame(control_panel)
+        button_container.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(10, 0))
+
+        # 执行操作框
+        buttons_frame = ttk.LabelFrame(button_container, text="执行操作", padding="15")
+        buttons_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 按钮三行的包裹容器，垂直居中分布
+        buttons_wrapper = ttk.Frame(buttons_frame)
+        buttons_wrapper.pack(expand=True)
+
+        # 统一按钮样式
+        btn_width = 12
+        btn_font = ("", 10, "bold")
+        label_font = ("", 10, "bold")
+
+        # 使用grid布局让标签左对齐
+        # ===== 第一行：开始提取描边、生成刀路G代码、开始切割 =====
+        tk.Label(buttons_wrapper, text="切割刻字：", fg="black", font=label_font).grid(row=0, column=0, sticky=tk.W, padx=(0, 10), pady=5)
+
+        row1_btns = ttk.Frame(buttons_wrapper)
+        row1_btns.grid(row=0, column=1, sticky=tk.W, pady=5)
 
         self.process_btn = tk.Button(
-            button_frame,
-            text="开始提取描边",
+            row1_btns,
+            text="提取描边",
             command=self._process_image,
             bg="#4CAF50",
             fg="white",
-            font=("", 12, "bold"),
-            width=14,
+            font=btn_font,
+            width=btn_width,
             state=tk.DISABLED,
             relief="raised",
             cursor="hand2"
@@ -243,13 +266,13 @@ class OutlineApp:
         self.process_btn.pack(side=tk.LEFT, padx=5)
 
         self.gcode_btn = tk.Button(
-            button_frame,
-            text="生成刀路G代码",
+            row1_btns,
+            text="刀路G代码",
             command=self._save_gcode,
             bg="#2196F3",
             fg="white",
-            font=("", 12, "bold"),
-            width=14,
+            font=btn_font,
+            width=btn_width,
             state=tk.DISABLED,
             relief="raised",
             cursor="hand2"
@@ -257,58 +280,100 @@ class OutlineApp:
         self.gcode_btn.pack(side=tk.LEFT, padx=5)
 
         self.cut_btn = tk.Button(
-            button_frame,
+            row1_btns,
             text="开始切割",
             command=self._start_cutting,
             bg="#FF5722",
             fg="white",
-            font=("", 12, "bold"),
-            width=14,
+            font=btn_font,
+            width=btn_width,
             state=tk.DISABLED,
             relief="raised",
             cursor="hand2"
         )
         self.cut_btn.pack(side=tk.LEFT, padx=5)
 
+        # ===== 第二行：生成填充G代码、开始填充 =====
+        tk.Label(buttons_wrapper, text="UV填充：", fg="black", font=label_font).grid(row=1, column=0, sticky=tk.W, padx=(0, 10), pady=5)
+
+        row2_btns = ttk.Frame(buttons_wrapper)
+        row2_btns.grid(row=1, column=1, sticky=tk.W, pady=5)
+
         self.fill_gcode_btn = tk.Button(
-            button_frame,
-            text="生成填充G代码",
+            row2_btns,
+            text="填充G代码",
             command=self._save_fill_gcode,
             bg="#9C27B0",
             fg="white",
-            font=("", 11, "bold"),
-            width=14,
+            font=btn_font,
+            width=btn_width,
             state=tk.DISABLED,
             relief="raised",
             cursor="hand2"
         )
-        self.fill_gcode_btn.pack(side=tk.LEFT, padx=5)
+        self.fill_gcode_btn.pack(side=tk.LEFT, padx=20)
 
         self.fill_btn = tk.Button(
-            button_frame,
+            row2_btns,
             text="开始填充",
             command=self._start_fill,
             bg="#E91E63",
             fg="white",
-            font=("", 11, "bold"),
-            width=10,
+            font=btn_font,
+            width=btn_width,
             state=tk.DISABLED,
             relief="raised",
             cursor="hand2"
         )
-        self.fill_btn.pack(side=tk.LEFT, padx=5)
+        self.fill_btn.pack(side=tk.LEFT, padx=20)
 
-        ttk.Button(
-            button_frame,
-            text="保存 SVG",
-            command=self._save_svg
-        ).pack(side=tk.LEFT, padx=5)
+        # ===== 第三行：保存SVG、保存预览图 =====
+        tk.Label(buttons_wrapper, text="保存图案：", fg="black", font=label_font).grid(row=2, column=0, sticky=tk.W, padx=(0, 10), pady=5)
 
-        ttk.Button(
-            button_frame,
+        row3_btns = ttk.Frame(buttons_wrapper)
+        row3_btns.grid(row=2, column=1, sticky=tk.W, pady=5)
+
+        tk.Button(
+            row3_btns,
+            text="保存SVG",
+            command=self._save_svg,
+            bg="#f0f0f0",
+            fg="black",
+            font=btn_font,
+            width=btn_width,
+            relief="raised",
+            cursor="hand2"
+        ).pack(side=tk.LEFT, padx=20)
+
+        tk.Button(
+            row3_btns,
             text="保存预览图",
-            command=self._save_preview
-        ).pack(side=tk.LEFT, padx=5)
+            command=self._save_preview,
+            bg="#f0f0f0",
+            fg="black",
+            font=btn_font,
+            width=btn_width,
+            relief="raised",
+            cursor="hand2"
+        ).pack(side=tk.LEFT, padx=20)
+
+        # Logo显示区域（去底，高度与参数设置框对齐，贴近右侧边缘）
+        self.params_frame = params_frame  # 保存参数框引用
+        self.buttons_frame = buttons_frame  # 保存按钮框引用
+        self.buttons_wrapper = buttons_wrapper  # 保存引用以便后续获取高度
+        self.right_panel = right_panel  # 保存右侧面板引用用于对齐
+        logo_frame = ttk.Frame(button_container)
+        logo_frame.pack(side=tk.LEFT, padx=(70, 0))
+        self.logo_label = tk.Label(
+            logo_frame,
+            bg="#f0f0f0",
+            relief="flat",
+            borderwidth=0
+        )
+        self.logo_label.pack(side=tk.BOTTOM)
+
+        # 延迟加载logo以获取参数框高度
+        self.root.after(100, self._load_logo_with_height)
 
         # 状态栏
         self.status_var = tk.StringVar(value="就绪")
@@ -606,6 +671,73 @@ class OutlineApp:
         if filepath:
             self.ugs_path_var.set(filepath)
 
+    def _load_logo_with_height(self):
+        """加载并显示logo（去底处理，高度与参数设置框对齐）"""
+        try:
+            logo_path = r"D:\下载\个人logo极简版.png"
+            if not os.path.exists(logo_path):
+                return
+
+            # 获取参数设置框的高度
+            self.params_frame.update()
+            params_height = self.params_frame.winfo_height()
+
+            # 如果还没渲染完成，稍后重试
+            if params_height < 50:
+                self.root.after(100, self._load_logo_with_height)
+                return
+
+            logo_img = Image.open(logo_path)
+
+            # 转换为RGBA模式以支持透明通道
+            if logo_img.mode != 'RGBA':
+                logo_img = logo_img.convert('RGBA')
+
+            # 获取图像数据
+            data = logo_img.getdata()
+
+            # 创建新的图像数据，将白色背景转为透明
+            new_data = []
+            for item in data:
+                # 判断是否为白色或接近白色
+                if item[0] > 240 and item[1] > 240 and item[2] > 240:
+                    # 白色像素转为完全透明
+                    new_data.append((255, 255, 255, 0))
+                else:
+                    # 保留原始颜色
+                    new_data.append(item)
+
+            # 更新图像数据
+            logo_img.putdata(new_data)
+
+            # 缩放到与参数设置框相同高度，底部对齐
+            original_width, original_height = logo_img.size
+            target_height = params_height
+            target_width = int(original_width * target_height / original_height)
+
+            logo_img = logo_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+
+            # 显示logo
+            logo_photo = ImageTk.PhotoImage(logo_img)
+            self.logo_label.config(image=logo_photo)
+            self.logo_label.image = logo_photo
+
+            # 绑定窗口大小变化事件，动态调整logo大小
+            self.root.bind('<Configure>', self._on_window_resize)
+
+        except Exception as e:
+            pass  # logo加载失败不影响主功能
+
+    def _on_window_resize(self, event):
+        """窗口大小变化时重新调整logo大小"""
+        # 只在主窗口resize时触发，避免递归
+        if event.widget == self.root:
+            self.root.after(100, self._load_logo_with_height)
+
+    def _load_logo(self):
+        """兼容旧接口，调用新的加载方法"""
+        self._load_logo_with_height()
+
     def _close_ugs_process(self):
         """关闭已运行的UGS进程"""
         try:
@@ -722,6 +854,18 @@ class OutlineApp:
                 offset_distance = self.offset_var.get()
                 contours = self.extractor.offset_contours(self.processed_contours, offset_distance)
 
+                # 先生成切割G-code以获取转换参数（如果还没有的话）
+                if self.gcode_gen.last_transform_params is None:
+                    target_width = float(self.target_width_var.get())
+                    target_height = float(self.target_height_var.get())
+                    feed_rate = int(self.gcode_feed_var.get())
+                    self.gcode_gen.feed_rate = feed_rate
+                    # 临时生成以计算转换参数
+                    self.gcode_gen.generate(contours, 0, 0, target_width, target_height, self.swap_xz_var.get())
+
+                # 将切割时的转换参数传递给填充生成器，确保填充区域与切割区域完全一致
+                self.fill_gen.set_transform_params(self.gcode_gen.get_transform_params())
+
                 self.fill_gen.feed_rate = int(self.gcode_feed_var.get())
                 self.fill_gen.save_to_file(
                     contours, filepath, fill_interval, y_offset, z_depth,
@@ -754,6 +898,18 @@ class OutlineApp:
                 z_depth = float(self.fill_z_depth_var.get())
                 offset_distance = self.offset_var.get()
                 contours = self.extractor.offset_contours(self.processed_contours, offset_distance)
+
+                # 先生成切割G-code以获取转换参数（如果还没有的话）
+                if self.gcode_gen.last_transform_params is None:
+                    target_width = float(self.target_width_var.get())
+                    target_height = float(self.target_height_var.get())
+                    feed_rate = int(self.gcode_feed_var.get())
+                    self.gcode_gen.feed_rate = feed_rate
+                    # 临时生成以计算转换参数
+                    self.gcode_gen.generate(contours, 0, 0, target_width, target_height, self.swap_xz_var.get())
+
+                # 将切割时的转换参数传递给填充生成器，确保填充区域与切割区域完全一致
+                self.fill_gen.set_transform_params(self.gcode_gen.get_transform_params())
 
                 self.fill_gen.feed_rate = int(self.gcode_feed_var.get())
                 self.fill_gen.save_to_file(
