@@ -14,10 +14,10 @@ import os
 import subprocess
 import time
 
-from outline_extractor import OutlineExtractor
-from svg_generator import SVGGenerator
-from gcode_generator import GCodeGenerator
-from fill_generator import FillGenerator
+from aipathcut.core.outline_extractor import OutlineExtractor
+from aipathcut.core.svg_generator import SVGGenerator
+from aipathcut.core.gcode_generator import GCodeGenerator
+from aipathcut.core.fill_generator import FillGenerator
 
 
 class ImageDropLabel(tk.Label):
@@ -953,15 +953,25 @@ class OutlineApp:
             self.status_var.set(f"启动失败: {e}")
 
 
-def main():
-    # Windows/macOS/Linux 拖放支持需要使用 TkinterDnD
-    try:
-        from tkinterdnd2 import Tk as DnDTk
-        root = DnDTk()
-    except ImportError:
-        root = tk.Tk()
+def main(root=None):
+    """
+    启动 GUI 应用
+
+    Args:
+        root: 可选的 Tkinter root 对象，如果为 None 则创建新的
+
+    Returns:
+        OutlineApp: 应用实例
+    """
+    if root is None:
+        # Windows/macOS/Linux 拖放支持需要使用 TkinterDnD
+        try:
+            from tkinterdnd2 import Tk as DnDTk
+            root = DnDTk()
+        except ImportError:
+            root = tk.Tk()
     app = OutlineApp(root)
-    root.mainloop()
+    return app
 
 
 if __name__ == '__main__':

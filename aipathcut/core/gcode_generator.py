@@ -286,6 +286,7 @@ class GCodeGenerator:
                 gcode_lines.append(f"G1 Y{y:.3f} Z{x:.3f}        ; 起点")
             else:
                 gcode_lines.append(f"G1 X{x:.3f} Y{y:.3f}        ; 起点")
+            gcode_lines.append("M8         ; 启用刀头")
 
             # 生成路径点
             for point in contour[1:]:
@@ -301,6 +302,7 @@ class GCodeGenerator:
                 gcode_lines.append(f"G1 Y{y:.3f} Z{x:.3f}        ; 闭合轮廓")
             else:
                 gcode_lines.append(f"G1 X{x:.3f} Y{y:.3f}        ; 闭合轮廓")
+            gcode_lines.append("M9         ; 关闭刀头")
             gcode_lines.append("")
 
         # G代码尾部

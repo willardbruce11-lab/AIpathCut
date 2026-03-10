@@ -5,7 +5,7 @@
 """
 import cv2
 import numpy as np
-from outline_extractor import OutlineExtractor
+from aipathcut.core.outline_extractor import OutlineExtractor
 from pathlib import Path
 
 

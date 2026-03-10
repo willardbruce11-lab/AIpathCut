@@ -5,8 +5,18 @@ __pycache__/
 *.so
 .Python
 *.egg-info/
+
+# 打包输出
 dist/
-build/
+build/build/
+build/*.spec
+
+# 保留 build/ 目录中的源代码
+!build/
+!build/*.py
+!build/*.nsi
+!build/*.md
+!build/*.txt
 
 # Virtual Environment
 venv/

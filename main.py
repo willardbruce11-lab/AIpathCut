@@ -2,11 +2,16 @@
 """
 主程序入口
 从白底图片提取人物/动物描边并生成 SVG 矢量图
+
+使用方法:
+    python main.py input.jpg              # 处理单张图片
+    python main.py ./input_dir --batch    # 批量处理
+    python main.py --gui                  # 启动图形界面
 """
 import argparse
 from pathlib import Path
-from outline_extractor import OutlineExtractor
-from svg_generator import SVGGenerator
+from aipathcut.core.outline_extractor import OutlineExtractor
+from aipathcut.core.svg_generator import SVGGenerator
 
 
 def process_image(input_path: str,
@@ -183,7 +188,26 @@ def main():
         help='批量处理模式（输入为目录）'
     )
 
+    parser.add_argument(
+        '--gui',
+        action='store_true',
+        help='启动图形界面'
+    )
+
     args = parser.parse_args()
+
+    # 启动 GUI
+    if args.gui:
+        import tkinter as tk
+        from aipathcut.gui import main as gui_main
+        try:
+            from tkinterdnd2 import Tk as DnDTk
+            root = DnDTk()
+        except ImportError:
+            root = tk.Tk()
+        app = gui_main(root)
+        root.mainloop()
+        return
 
     # 确定输出路径
     if args.output:
