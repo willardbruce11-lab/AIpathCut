@@ -128,6 +128,7 @@ def main():
 
     parser.add_argument(
         'input',
+        nargs='?',  # 可选参数
         help='输入图片路径或目录'
     )
 
@@ -198,6 +199,20 @@ def main():
 
     # 启动 GUI
     if args.gui:
+        import tkinter as tk
+        from aipathcut.gui import main as gui_main
+        try:
+            from tkinterdnd2 import Tk as DnDTk
+            root = DnDTk()
+        except ImportError:
+            root = tk.Tk()
+        app = gui_main(root)
+        root.mainloop()
+        return
+
+    # 检查是否提供了输入参数
+    if not args.input:
+        parser.error("需要提供输入图片路径，或使用 --gui 启动图形界面")
         import tkinter as tk
         from aipathcut.gui import main as gui_main
         try:

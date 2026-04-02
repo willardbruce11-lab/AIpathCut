@@ -6,11 +6,11 @@
 
 坐标系统说明：
 - X轴负值表示进纸，X=0为刀架最外侧
-- 纸张中心位置：X=-7, Y=4
+- 纸张中心位置：X=-3.5, Y=100
 - UI基准尺寸：宽50mm × 高76mm
-- Gcode基准加工区域：X14 × Y8 (X从-14到0, Y从0到8)
-- 比例关系：UI尺寸 × (14/50) = Gcode X范围，UI尺寸 × (8/76) = Gcode Y范围
-- 进纸位置 X=-7 对应纸张中心和加工区域中心
+- Gcode基准加工区域：X7 × Y200 (X从-7到0, Y从0到200)
+- 比例关系：UI尺寸 × (7/50) = Gcode X范围，UI尺寸 × (200/76) = Gcode Y范围
+- 进纸位置 X=-3.5 对应纸张中心和加工区域中心
 """
 
 import cv2
@@ -25,17 +25,17 @@ class FillGenerator:
     UI_BASE_HEIGHT = 76
 
     # Gcode基准加工区域（mm）
-    GCODE_BASE_WIDTH = 14   # X从-14到0
-    GCODE_BASE_HEIGHT = 8   # Y从0到8
+    GCODE_BASE_WIDTH = 10    # X从0到10
+    GCODE_BASE_HEIGHT = 200  # Y从0到-200
 
-    def __init__(self, feed_rate=1000, paper_center_x=-7, paper_center_y=4):
+    def __init__(self, feed_rate=1000, paper_center_x=-5.8, paper_center_y=150):
         """
         初始化填充生成器
 
         Args:
             feed_rate: 进给速度 (mm/min)
-            paper_center_x: 纸张中心X坐标(mm)，默认-7（进纸位置）
-            paper_center_y: 纸张中心Y坐标(mm)，默认4
+            paper_center_x: 纸张中心X坐标(mm)，默认-3.5（进纸位置）
+            paper_center_y: 纸张中心Y坐标(mm)，默认100
         """
         self.feed_rate = feed_rate
         self.paper_center_x = paper_center_x
@@ -129,7 +129,7 @@ class FillGenerator:
 
     def _calculate_scale_and_center(self, contours, ui_width, ui_height, auto_rotate=True):
         """
-        计算缩放比例和图案中心点（等比例缩放）
+        计算缩放比例和图案中心点（非等比缩放，X/Y独立缩放）
 
         Args:
             contours: OpenCV格式的轮廓列表
@@ -138,13 +138,12 @@ class FillGenerator:
             auto_rotate: 是否自动旋转以适应加工幅面
 
         Returns:
-            tuple: (scale, center_x_pixel, center_y_pixel, gcode_work_width, gcode_work_height, rotated)
+            tuple: (scale_x, scale_y, center_x_pixel, center_y_pixel, gcode_work_width, gcode_work_height, rotated)
 
         说明：
             - UI尺寸按比例映射到固定的Gcode加工区域
-            - Gcode工作宽度 = UI宽度 × (14/50)
-            - Gcode工作高度 = UI高度 × (8/76)
-            - 自动旋转：如果图形长宽比与加工区域不匹配，自动旋转90度
+            - 非等比缩放：X和Y各自独立缩放到对应加工区域
+            - 自动旋转：选择畸变率更低的方向
         """
         min_x, max_x, min_y, max_y = self._get_contours_bounds(contours)
         orig_width = max_x - min_x if max_x > min_x else 1
@@ -154,25 +153,29 @@ class FillGenerator:
         gcode_work_width = ui_width * (self.GCODE_BASE_WIDTH / self.UI_BASE_WIDTH)
         gcode_work_height = ui_height * (self.GCODE_BASE_HEIGHT / self.UI_BASE_HEIGHT)
 
-        # 判断是否需要旋转（自动适应幅面）
+        # 不旋转时的独立缩放
+        sx_no_rot = gcode_work_width / orig_width
+        sy_no_rot = gcode_work_height / orig_height
+
+        # 旋转时的独立缩放（宽高互换）
+        sx_rot = gcode_work_width / orig_height
+        sy_rot = gcode_work_height / orig_width
+
+        # 判断是否需要旋转：选择畸变率更低的方向
         rotated = False
         if auto_rotate:
-            # 不旋转时的利用率
-            scale_no_rotate = min(gcode_work_width / orig_width, gcode_work_height / orig_height)
-            # 旋转后的利用率（旋转后宽变高，高变宽）
-            scale_rotate = min(gcode_work_width / orig_height, gcode_work_height / orig_width)
-            # 选择利用率更高的方向
-            if scale_rotate > scale_no_rotate * 1.01:  # 1%容差
+            distortion_no_rot = max(sx_no_rot / sy_no_rot, sy_no_rot / sx_no_rot) if sy_no_rot > 0 and sx_no_rot > 0 else float('inf')
+            distortion_rot = max(sx_rot / sy_rot, sy_rot / sx_rot) if sy_rot > 0 and sx_rot > 0 else float('inf')
+            if distortion_rot < distortion_no_rot * 0.99:  # 1%容差
                 rotated = True
 
-        scale_x = gcode_work_width / (orig_height if rotated else orig_width)
-        scale_y = gcode_work_height / (orig_width if rotated else orig_height)
-        scale = min(scale_x, scale_y)
+        scale_x = sx_rot if rotated else sx_no_rot
+        scale_y = sy_rot if rotated else sy_no_rot
 
         center_x_pixel = (min_x + max_x) / 2
         center_y_pixel = (min_y + max_y) / 2
 
-        return scale, center_x_pixel, center_y_pixel, gcode_work_width, gcode_work_height, rotated
+        return scale_x, scale_y, center_x_pixel, center_y_pixel, gcode_work_width, gcode_work_height, rotated
 
     def generate(self, contours, fill_interval, y_offset, z_depth,
                  target_width=0, target_height=0, swap_xz=False):
@@ -205,7 +208,8 @@ class FillGenerator:
         # 如果有外部转换参数（从切割生成器获取），直接使用，确保填充与切割完全一致
         if self.external_transform_params:
             params = self.external_transform_params
-            scale = params['scale']
+            scale_x = params['scale_x']
+            scale_y = params['scale_y']
             center_x_pixel = params['center_x_pixel']
             center_y_pixel = params['center_y_pixel']
             gcode_work_width = params['gcode_work_width']
@@ -219,19 +223,19 @@ class FillGenerator:
             max_y = params['max_y']
             # 使用保存的工作轮廓（确保使用相同的旋转状态）
             work_contours = params.get('work_contours', contours)
-            # 添加注释说明使用了切割时的参数
-            gcode_lines.append("; === 使用切割时的转换参数，确保填充区域与切割区域完全一致 ===")
         else:
-            # 没有外部参数时，独立计算（可能存在偏差）
-            gcode_lines.append("; === 警告：未使用切割参数，填充区域可能与切割区域不完全一致 ===")
             # 获取原始轮廓边界
             min_x, max_x, min_y, max_y = self._get_contours_bounds(contours)
             orig_width = max_x - min_x if max_x > min_x else 1
             orig_height = max_y - min_y if max_y > min_y else 1
 
             # 计算缩放比例和图案中心点，判断是否需要旋转
-            scale, center_x_pixel, center_y_pixel, gcode_work_width, gcode_work_height, rotated = \
+            scale_x, scale_y, center_x_pixel, center_y_pixel, gcode_work_width, gcode_work_height, rotated = \
                 self._calculate_scale_and_center(contours, target_width, target_height, auto_rotate=True)
+
+            # 将加工路径缩小到0.64倍（两次0.8缩放），中心位置不变
+            scale_x *= 0.64
+            scale_y *= 0.64
 
             # 如果需要旋转，先旋转轮廓
             work_contours = contours
@@ -244,111 +248,86 @@ class FillGenerator:
                 # 旋转后的尺寸
                 orig_width, orig_height = orig_height, orig_width
 
-        scaled_width = orig_width * scale
-        scaled_height = orig_height * scale
-
-        # Z轴安全高度（抬起位置）
-        safe_z = 5.0
+        scaled_width = orig_width * scale_x
+        scaled_height = orig_height * scale_y
 
         # 填充间隔也需要按比例缩放到Gcode尺寸
         fill_interval_scaled = fill_interval * (self.GCODE_BASE_WIDTH / self.UI_BASE_WIDTH)
-        x_interval_pixels = fill_interval_scaled / scale if scale > 0 else fill_interval_scaled
+
+        # 将填充路径缩小到0.64倍（两次0.8缩放），中心位置不变
+        fill_interval_scaled *= 0.64
+        x_interval_pixels = fill_interval_scaled / scale_x if scale_x > 0 else fill_interval_scaled
 
         # 扩展边界，确保扫描覆盖整个轮廓
         scan_min_x = min_x - x_interval_pixels
         scan_max_x = max_x + x_interval_pixels
 
         # G代码头部
-        gcode_lines.append("; AIpathCut Fill G-code - UV扫描填充")
-        gcode_lines.append(f"; Generated by AIpathCut - Segment-based Scan Fill")
-        if rotated:
-            gcode_lines.append("; 自动旋转: 是 (顺时针90度)")
-        if swap_xz:
-            gcode_lines.append("; XZ轴交换模式: X→Z, Z→X, Y→Y")
-        gcode_lines.append(f"; 原图轮廓: {orig_height if rotated else max(orig_width, 1):.1f} x {orig_width if rotated else max(orig_height, 1):.1f} 像素 (旋转前)")
-        gcode_lines.append(f"; UI输入尺寸: {target_width} x {target_height} mm")
-        gcode_lines.append(f"; Gcode加工区域: {gcode_work_width:.2f} x {gcode_work_height:.2f} mm")
-        gcode_lines.append(f"; 等比缩放: {scale:.4f}")
-        gcode_lines.append(f"; X轴行间隔(UI): {fill_interval} mm -> Gcode: {fill_interval_scaled:.3f} mm")
-        gcode_lines.append(f"; Z轴切割深度: {z_depth} mm")
-        gcode_lines.append(f"; Z轴安全高度: {safe_z} mm")
-        if swap_xz:
-            gcode_lines.append(f"; 纸张中心: Z={self.paper_center_x}, Y={self.paper_center_y}")
-        else:
-            gcode_lines.append(f"; 纸张中心: X={self.paper_center_x}, Y={self.paper_center_y}")
-        gcode_lines.append(f"; Feed rate: {self.feed_rate} mm/min")
-        gcode_lines.append("; ---")
-        gcode_lines.append("G21         ; 使用毫米单位")
-        gcode_lines.append("G90         ; 绝对坐标模式")
-        gcode_lines.append(f"F{self.feed_rate}        ; 设置速度{self.feed_rate}mm/min")
+        gcode_lines.append("G21")
+        gcode_lines.append("G90")
+        gcode_lines.append(f"F{self.feed_rate}")
         gcode_lines.append("")
-        gcode_lines.append("; 开始前归零")
         if swap_xz:
             gcode_lines.append("G92 Z0 Y0")
         else:
             gcode_lines.append("G92 X0 Y0")
         gcode_lines.append("")
-        gcode_lines.append("; 进纸，刀头到纸张中心位置")
         if swap_xz:
-            gcode_lines.append(f"G1 Z{self.paper_center_x} Y{self.paper_center_y}")
+            gcode_lines.append(f"G0 Z{-self.paper_center_x} Y{-self.paper_center_y}")
         else:
-            gcode_lines.append(f"G1 X{self.paper_center_x} Y{self.paper_center_y}")
+            gcode_lines.append(f"G0 X{-self.paper_center_x} Y{-self.paper_center_y}")
         gcode_lines.append("")
 
         # 逐行扫描：固定X（像素坐标），找出垂直线与轮廓的精确交点
-        x = scan_min_x
+        # 先收集所有填充段，再统一输出（刀头全程保持下降，使用M3/M5控制）
+        fill_segments = []  # [(out_x, out_y_entry, out_y_exit), ...]
 
+        x = scan_min_x
         while x <= scan_max_x:
-            # 在当前X位置，找出与轮廓的所有交点
             intersections = self._find_vertical_intersections(x, work_contours)
 
             if len(intersections) >= 2:
-                # 转换X坐标到输出坐标（相对于纸张中心）
-                out_x = self.paper_center_x + (x - center_x_pixel) * scale
+                out_x = -(self.paper_center_x + (x - center_x_pixel) * scale_x)
 
-                # 配对交点生成线段
-                # 偶数索引是入口，奇数索引是出口
                 for i in range(0, len(intersections) - 1, 2):
                     if i + 1 >= len(intersections):
                         break
 
-                    y_entry = intersections[i]      # 进入轮廓的Y
-                    y_exit = intersections[i + 1]   # 离开轮廓的Y
+                    y_entry = intersections[i]
+                    y_exit = intersections[i + 1]
 
-                    # 转换Y坐标到输出坐标（相对于纸张中心，与切割使用完全相同的坐标转换）
-                    # 注意：不再添加y_offset偏移，确保填充区域与切割区域严格一致
-                    out_y_entry = self.paper_center_y + (center_y_pixel - y_entry) * scale
-                    out_y_exit = self.paper_center_y + (center_y_pixel - y_exit) * scale
+                    out_y_entry = -(self.paper_center_y + (center_y_pixel - y_entry) * scale_y)
+                    out_y_exit = -(self.paper_center_y + (center_y_pixel - y_exit) * scale_y)
 
-                    # 进入轮廓：先抬起移动到入口，然后下刀
-                    if swap_xz:
-                        gcode_lines.append(f"G0 Y{out_y_entry:.3f} Z{out_x:.3f} X{safe_z:.3f}        ; 移动到入口")
-                        gcode_lines.append(f"G1 Y{out_y_entry:.3f} Z{out_x:.3f} X{z_depth:.3f}        ; 下刀")
-                    else:
-                        gcode_lines.append(f"G0 X{out_x:.3f} Y{out_y_entry:.3f} Z{safe_z:.3f}        ; 移动到入口")
-                        gcode_lines.append(f"G1 X{out_x:.3f} Y{out_y_entry:.3f} Z{z_depth:.3f}        ; 下刀")
-
-                    # 在轮廓内切割到出口
-                    if swap_xz:
-                        gcode_lines.append(f"G1 Y{out_y_exit:.3f} Z{out_x:.3f} X{z_depth:.3f}        ; 切割到出口")
-                    else:
-                        gcode_lines.append(f"G1 X{out_x:.3f} Y{out_y_exit:.3f} Z{z_depth:.3f}        ; 切割到出口")
+                    fill_segments.append((out_x, out_y_entry, out_y_exit))
 
             x += x_interval_pixels
 
-        # 填充完成后抬起
-        gcode_lines.append("")
-        if swap_xz:
-            gcode_lines.append(f"G0 X{safe_z:.3f}        ; 抬起刀头")
-        else:
-            gcode_lines.append(f"G0 Z{safe_z:.3f}        ; 抬起刀头")
+        # 输出填充路径：G0到第一个入口 → M3下刀 → G1连续填充 → M5关闭刀头
+        if fill_segments:
+            first_x, first_y_entry, _ = fill_segments[0]
+            if swap_xz:
+                gcode_lines.append(f"G0 Y{first_y_entry:.3f} Z{first_x:.3f}")
+            else:
+                gcode_lines.append(f"G0 X{first_x:.3f} Y{first_y_entry:.3f}")
+            gcode_lines.append("M3")
+            gcode_lines.append("M4")
+
+            for seg_x, seg_y_entry, seg_y_exit in fill_segments:
+                if swap_xz:
+                    gcode_lines.append(f"G1 Y{seg_y_entry:.3f} Z{seg_x:.3f}")
+                    gcode_lines.append(f"G1 Y{seg_y_exit:.3f} Z{seg_x:.3f}")
+                else:
+                    gcode_lines.append(f"G1 X{seg_x:.3f} Y{seg_y_entry:.3f}")
+                    gcode_lines.append(f"G1 X{seg_x:.3f} Y{seg_y_exit:.3f}")
+
+            gcode_lines.append("M5")
 
         gcode_lines.append("")
-        gcode_lines.append("; 出纸，刀头归位")
         if swap_xz:
-            gcode_lines.append("G1 Z-20 Y0")
+            gcode_lines.append("G0 Z20 Y0")
         else:
-            gcode_lines.append("G1 X-20 Y0")
+            gcode_lines.append("G0 X20 Y0")
         gcode_lines.append("")
 
         return "\n".join(gcode_lines)

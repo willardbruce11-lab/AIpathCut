@@ -4,11 +4,11 @@ G代码生成模块
 
 坐标系统说明：
 - X轴负值表示进纸，X=0为刀架最外侧
-- 纸张中心位置：X=-7, Y=4
+- 纸张中心位置：X=-3.5, Y=100
 - UI基准尺寸：宽50mm × 高76mm
-- Gcode基准加工区域：X14 × Y8 (X从-14到0, Y从0到8)
-- 比例关系：UI尺寸 × (14/50) = Gcode X范围，UI尺寸 × (8/76) = Gcode Y范围
-- 进纸位置 X=-7 对应纸张中心和加工区域中心
+- Gcode基准加工区域：X7 × Y200 (X从-7到0, Y从0到200)
+- 比例关系：UI尺寸 × (7/50) = Gcode X范围，UI尺寸 × (200/76) = Gcode Y范围
+- 进纸位置 X=-3.5 对应纸张中心和加工区域中心
 """
 
 import numpy as np
@@ -22,17 +22,17 @@ class GCodeGenerator:
     UI_BASE_HEIGHT = 76
 
     # Gcode基准加工区域（mm）
-    GCODE_BASE_WIDTH = 14   # X从-14到0
-    GCODE_BASE_HEIGHT = 8   # Y从0到8
+    GCODE_BASE_WIDTH = 10    # X从0到10
+    GCODE_BASE_HEIGHT = 200  # Y从0到-200
 
-    def __init__(self, feed_rate=1000, paper_center_x=-7, paper_center_y=4):
+    def __init__(self, feed_rate=1000, paper_center_x=-7.5, paper_center_y=150):
         """
         初始化G代码生成器
 
         Args:
             feed_rate: 进给速度 (mm/min)
-            paper_center_x: 纸张中心X坐标(mm)，默认-7（进纸位置）
-            paper_center_y: 纸张中心Y坐标(mm)，默认4
+            paper_center_x: 纸张中心X坐标(mm)，默认-3.5（进纸位置）
+            paper_center_y: 纸张中心Y坐标(mm)，默认100
         """
         self.feed_rate = feed_rate
         self.paper_center_x = paper_center_x
@@ -86,6 +86,54 @@ class GCodeGenerator:
             rotated_contours.append(np.array(new_contour, dtype=np.int32))
         return rotated_contours
 
+    def _densify_contours(self, contours, scale_x, scale_y, max_segment_mm=2.0):
+        """
+        对gcode空间中过长的线段进行加密插值
+
+        非等比缩放时，Y轴放大倍数远大于X轴，轮廓中原本相邻的点
+        在gcode空间中Y方向可能相距很远，导致曲线不够光滑。
+        此方法对过长的线段进行细分，插入插值点。
+
+        Args:
+            contours: OpenCV格式的轮廓列表
+            scale_x: X轴缩放比例
+            scale_y: Y轴缩放比例
+            max_segment_mm: gcode空间中线段最大长度(mm)
+
+        Returns:
+            list: 加密后的轮廓列表
+        """
+        densified_contours = []
+        for contour in contours:
+            if len(contour) < 2:
+                densified_contours.append(contour)
+                continue
+
+            new_contour = []
+            n = len(contour)
+            for i in range(n):
+                p1 = contour[i][0]
+                p2 = contour[(i + 1) % n][0]
+
+                new_contour.append(contour[i])
+
+                # 计算gcode空间中的距离
+                dx = (p2[0] - p1[0]) * scale_x
+                dy = (p2[1] - p1[1]) * scale_y
+                dist = (dx * dx + dy * dy) ** 0.5
+
+                if dist > max_segment_mm:
+                    n_segments = int(dist / max_segment_mm) + 1
+                    for j in range(1, n_segments):
+                        t = j / n_segments
+                        new_x = p1[0] + (p2[0] - p1[0]) * t
+                        new_y = p1[1] + (p2[1] - p1[1]) * t
+                        new_contour.append([[new_x, new_y]])
+
+            densified_contours.append(np.array(new_contour, dtype=np.float32))
+
+        return densified_contours
+
     def get_transform_params(self):
         """
         获取最后一次计算的转换参数
@@ -98,7 +146,7 @@ class GCodeGenerator:
 
     def _calculate_scale_and_center(self, contours, ui_width, ui_height, auto_rotate=True):
         """
-        计算缩放比例和图案中心点（等比例缩放）
+        计算缩放比例和图案中心点（非等比缩放，X/Y独立缩放）
 
         Args:
             contours: OpenCV格式的轮廓列表
@@ -107,14 +155,12 @@ class GCodeGenerator:
             auto_rotate: 是否自动旋转以适应加工幅面
 
         Returns:
-            tuple: (scale, center_x_pixel, center_y_pixel, gcode_work_width, gcode_work_height, rotated)
+            tuple: (scale_x, scale_y, center_x_pixel, center_y_pixel, gcode_work_width, gcode_work_height, rotated)
 
         说明：
             - UI尺寸按比例映射到固定的Gcode加工区域
-            - Gcode工作宽度 = UI宽度 × (14/50)
-            - Gcode工作高度 = UI高度 × (8/76)
-            - 等比例缩放：保持原图长宽比不变形
-            - 自动旋转：如果图形长宽比与加工区域不匹配，自动旋转90度
+            - 非等比缩放：X和Y各自独立缩放到对应加工区域
+            - 自动旋转：选择畸变率更低的方向
         """
         min_x, max_x, min_y, max_y = self._get_contours_bounds(contours)
         orig_width = max_x - min_x
@@ -130,25 +176,27 @@ class GCodeGenerator:
         gcode_work_width = ui_width * (self.GCODE_BASE_WIDTH / self.UI_BASE_WIDTH)
         gcode_work_height = ui_height * (self.GCODE_BASE_HEIGHT / self.UI_BASE_HEIGHT)
 
-        # 计算长宽比
-        orig_aspect = orig_width / orig_height if orig_height > 0 else 1
-        work_aspect = gcode_work_width / gcode_work_height if gcode_work_height > 0 else 1
+        # 不旋转时的独立缩放
+        sx_no_rot = gcode_work_width / orig_width
+        sy_no_rot = gcode_work_height / orig_height
 
-        # 判断是否需要旋转（自动适应幅面）
+        # 旋转时的独立缩放（宽高互换）
+        sx_rot = gcode_work_width / orig_height
+        sy_rot = gcode_work_height / orig_width
+
+        # 判断是否需要旋转：选择畸变率更低的方向
         rotated = False
         if auto_rotate:
-            # 如果图形是横向的（宽>高），而加工区域是纵向的（宽<高），则需要旋转
-            # 或者反过来
-            # 更精确的判断：比较旋转前后的利用率
-            # 不旋转时的利用率
-            scale_no_rotate = min(gcode_work_width / orig_width, gcode_work_height / orig_height)
-            # 旋转后的利用率（旋转后宽变高，高变宽）
-            scale_rotate = min(gcode_work_width / orig_height, gcode_work_height / orig_width)
-            # 选择利用率更高的方向
-            if scale_rotate > scale_no_rotate * 1.01:  # 1%容差，避免几乎相等时也旋转
+            # 畸变率 = max(sx/sy, sy/sx)，越接近1越好
+            distortion_no_rot = max(sx_no_rot / sy_no_rot, sy_no_rot / sx_no_rot) if sy_no_rot > 0 and sx_no_rot > 0 else float('inf')
+            distortion_rot = max(sx_rot / sy_rot, sy_rot / sx_rot) if sy_rot > 0 and sx_rot > 0 else float('inf')
+            if distortion_rot < distortion_no_rot * 0.99:  # 1%容差
                 rotated = True
 
-        return scale_no_rotate if not rotated else scale_rotate, \
+        scale_x = sx_rot if rotated else sx_no_rot
+        scale_y = sy_rot if rotated else sy_no_rot
+
+        return scale_x, scale_y, \
                (min_x + max_x) / 2, (min_y + max_y) / 2, \
                gcode_work_width, gcode_work_height, rotated
 
@@ -182,12 +230,17 @@ class GCodeGenerator:
         orig_height = max_y - min_y if max_y > min_y else 0
 
         # 计算缩放比例和图案中心点，判断是否需要旋转
-        scale, center_x_pixel, center_y_pixel, gcode_work_width, gcode_work_height, rotated = \
+        scale_x, scale_y, center_x_pixel, center_y_pixel, gcode_work_width, gcode_work_height, rotated = \
             self._calculate_scale_and_center(contours, target_width, target_height, auto_rotate=True)
+
+        # 将加工路径缩小到0.64倍（两次0.8缩放），中心位置不变
+        scale_x *= 0.64
+        scale_y *= 0.64
 
         # 保存转换参数供填充生成器使用
         self.last_transform_params = {
-            'scale': scale,
+            'scale_x': scale_x,
+            'scale_y': scale_y,
             'center_x_pixel': center_x_pixel,
             'center_y_pixel': center_y_pixel,
             'gcode_work_width': gcode_work_width,
@@ -228,43 +281,27 @@ class GCodeGenerator:
         # 保存工作轮廓（供填充生成器使用，确保使用相同的旋转状态）
         self.last_transform_params['work_contours'] = work_contours
 
+        # 非等比缩放时加密轮廓点，保证Y轴放大后曲线光滑
+        work_contours = self._densify_contours(work_contours, scale_x, scale_y)
+
         # 计算实际缩放后的尺寸
-        scaled_width = orig_width * scale
-        scaled_height = orig_height * scale
+        scaled_width = orig_width * scale_x
+        scaled_height = orig_height * scale_y
 
         # G代码头部
-        gcode_lines.append("; AIpathCut G-code - 切割路径")
-        gcode_lines.append(f"; Generated by AIpathCut")
-        if rotated:
-            gcode_lines.append("; 自动旋转: 是 (顺时针90度)")
-        if swap_xz:
-            gcode_lines.append("; XZ轴交换模式: X→Z, Y→Y")
-        gcode_lines.append(f"; 原图轮廓: {orig_height if rotated else max(orig_width, 1):.1f} x {orig_width if rotated else max(orig_height, 1):.1f} 像素 (旋转前)")
-        gcode_lines.append(f"; UI输入尺寸: {target_width} x {target_height} mm")
-        gcode_lines.append(f"; Gcode加工区域: {gcode_work_width:.2f} x {gcode_work_height:.2f} mm")
-        gcode_lines.append(f"; 等比缩放: {scale:.4f} (保持长宽比)")
-        gcode_lines.append(f"; 实际尺寸: {scaled_width:.1f} x {scaled_height:.1f} mm")
-        if swap_xz:
-            gcode_lines.append(f"; 纸张中心: Z={self.paper_center_x}, Y={self.paper_center_y}")
-        else:
-            gcode_lines.append(f"; 纸张中心: X={self.paper_center_x}, Y={self.paper_center_y}")
-        gcode_lines.append(f"; Feed rate: {self.feed_rate} mm/min")
-        gcode_lines.append("; ---")
-        gcode_lines.append("G21         ; 使用毫米单位")
-        gcode_lines.append("G90         ; 绝对坐标模式")
-        gcode_lines.append(f"F{self.feed_rate}        ; 设置速度{self.feed_rate}mm/min")
+        gcode_lines.append("G21")
+        gcode_lines.append("G90")
+        gcode_lines.append(f"F{self.feed_rate}")
         gcode_lines.append("")
-        gcode_lines.append("; 开始前归零")
         if swap_xz:
             gcode_lines.append("G92 Z0 Y0")
         else:
             gcode_lines.append("G92 X0 Y0")
         gcode_lines.append("")
-        gcode_lines.append("; 进纸，刀头到纸张中心位置")
         if swap_xz:
-            gcode_lines.append(f"G1 Z{self.paper_center_x} Y{self.paper_center_y}")
+            gcode_lines.append(f"G1 Z{-self.paper_center_x} Y{-self.paper_center_y}")
         else:
-            gcode_lines.append(f"G1 X{self.paper_center_x} Y{self.paper_center_y}")
+            gcode_lines.append(f"G1 X{-self.paper_center_x} Y{-self.paper_center_y}")
         gcode_lines.append("")
 
         # 为每个轮廓生成路径
@@ -272,26 +309,21 @@ class GCodeGenerator:
             if len(contour) < 2:
                 continue
 
-            gcode_lines.append(f"; 轮廓 {idx + 1}")
-
             # 转换第一个点（起点）
             start = contour[0][0]
-            # 坐标映射：图案中心映射到纸张中心
-            # X: 图案中心 -> 纸张中心X
-            # Y: 图像坐标向下翻转，中心对齐
-            x = self.paper_center_x + (start[0] - center_x_pixel) * scale
-            y = self.paper_center_y + (center_y_pixel - start[1]) * scale
+            x = -(self.paper_center_x + (start[0] - center_x_pixel) * scale_x)
+            y = -(self.paper_center_y + (center_y_pixel - start[1]) * scale_y)
 
             if swap_xz:
-                gcode_lines.append(f"G1 Y{y:.3f} Z{x:.3f}        ; 起点")
+                gcode_lines.append(f"G1 Y{y:.3f} Z{x:.3f}")
             else:
-                gcode_lines.append(f"G1 X{x:.3f} Y{y:.3f}        ; 起点")
-            gcode_lines.append("M8         ; 启用刀头")
+                gcode_lines.append(f"G1 X{x:.3f} Y{y:.3f}")
+            gcode_lines.append("M8")
 
             # 生成路径点
             for point in contour[1:]:
-                px = self.paper_center_x + (point[0][0] - center_x_pixel) * scale
-                py = self.paper_center_y + (center_y_pixel - point[0][1]) * scale
+                px = -(self.paper_center_x + (point[0][0] - center_x_pixel) * scale_x)
+                py = -(self.paper_center_y + (center_y_pixel - point[0][1]) * scale_y)
                 if swap_xz:
                     gcode_lines.append(f"G1 Y{py:.3f} Z{px:.3f}")
                 else:
@@ -299,19 +331,18 @@ class GCodeGenerator:
 
             # 闭合路径
             if swap_xz:
-                gcode_lines.append(f"G1 Y{y:.3f} Z{x:.3f}        ; 闭合轮廓")
+                gcode_lines.append(f"G1 Y{y:.3f} Z{x:.3f}")
             else:
-                gcode_lines.append(f"G1 X{x:.3f} Y{y:.3f}        ; 闭合轮廓")
-            gcode_lines.append("M9         ; 关闭刀头")
+                gcode_lines.append(f"G1 X{x:.3f} Y{y:.3f}")
+            gcode_lines.append("M9")
             gcode_lines.append("")
 
         # G代码尾部
         gcode_lines.append("")
-        gcode_lines.append("; 出纸，刀头归位")
         if swap_xz:
-            gcode_lines.append("G1 Z-20 Y0")
+            gcode_lines.append("G1 Z20 Y0")
         else:
-            gcode_lines.append("G1 X-20 Y0")
+            gcode_lines.append("G1 X20 Y0")
         gcode_lines.append("")
 
         return "\n".join(gcode_lines)

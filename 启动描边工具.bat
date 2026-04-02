@@ -10,7 +10,7 @@ if exist "%ANACONDA_PY%" (
     set "PYTHON_EXE=python"
 )
 
-"%PYTHON_EXE%" gui.py
+"%PYTHON_EXE%" main.py --gui
 if errorlevel 1 (
     echo.
     echo 程序运行出错，请检查是否已安装所需依赖：
