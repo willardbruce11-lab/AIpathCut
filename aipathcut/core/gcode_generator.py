@@ -25,6 +25,10 @@ class GCodeGenerator:
     GCODE_BASE_WIDTH = 10    # X从0到10
     GCODE_BASE_HEIGHT = 200  # Y从0到-200
 
+    # 物理标定：每个gcode单位对应的物理mm数（机器特定）
+    MM_PER_GCODE_X = 76.0 / 9.0    # ≈ 8.444 mm per gcode X unit
+    MM_PER_GCODE_Y = 50.0 / 300.0  # ≈ 0.1667 mm per gcode Y unit
+
     def __init__(self, feed_rate=1000, paper_center_x=-7.5, paper_center_y=150):
         """
         初始化G代码生成器
@@ -117,10 +121,10 @@ class GCodeGenerator:
 
                 new_contour.append(contour[i])
 
-                # 计算gcode空间中的距离
-                dx = (p2[0] - p1[0]) * scale_x
-                dy = (p2[1] - p1[1]) * scale_y
-                dist = (dx * dx + dy * dy) ** 0.5
+                # 计算物理空间中的距离
+                dx_phys = (p2[0] - p1[0]) * scale_x * self.MM_PER_GCODE_X
+                dy_phys = (p2[1] - p1[1]) * scale_y * self.MM_PER_GCODE_Y
+                dist = (dx_phys * dx_phys + dy_phys * dy_phys) ** 0.5
 
                 if dist > max_segment_mm:
                     n_segments = int(dist / max_segment_mm) + 1
@@ -146,7 +150,7 @@ class GCodeGenerator:
 
     def _calculate_scale_and_center(self, contours, ui_width, ui_height, auto_rotate=True):
         """
-        计算缩放比例和图案中心点（非等比缩放，X/Y独立缩放）
+        计算缩放比例和图案中心点（等比物理缩放，以Y轴为标准）
 
         Args:
             contours: OpenCV格式的轮廓列表
@@ -158,9 +162,9 @@ class GCodeGenerator:
             tuple: (scale_x, scale_y, center_x_pixel, center_y_pixel, gcode_work_width, gcode_work_height, rotated)
 
         说明：
-            - UI尺寸按比例映射到固定的Gcode加工区域
-            - 非等比缩放：X和Y各自独立缩放到对应加工区域
-            - 自动旋转：选择畸变率更低的方向
+            - Y轴缩放保持不变，X轴从Y轴按物理比例推导
+            - 物理比例 = MM_PER_GCODE_Y / MM_PER_GCODE_X
+            - 自动旋转：选择输出更大的方向
         """
         min_x, max_x, min_y, max_y = self._get_contours_bounds(contours)
         orig_width = max_x - min_x
@@ -176,21 +180,21 @@ class GCodeGenerator:
         gcode_work_width = ui_width * (self.GCODE_BASE_WIDTH / self.UI_BASE_WIDTH)
         gcode_work_height = ui_height * (self.GCODE_BASE_HEIGHT / self.UI_BASE_HEIGHT)
 
-        # 不旋转时的独立缩放
-        sx_no_rot = gcode_work_width / orig_width
+        # 物理比例修正因子：确保X和Y方向物理位移等比
+        phys_ratio = self.MM_PER_GCODE_Y / self.MM_PER_GCODE_X
+
+        # 不旋转：Y填满gcode_work_height，X按物理比例从Y推导
         sy_no_rot = gcode_work_height / orig_height
+        sx_no_rot = sy_no_rot * phys_ratio
 
-        # 旋转时的独立缩放（宽高互换）
-        sx_rot = gcode_work_width / orig_height
+        # 旋转时（宽高互换）
         sy_rot = gcode_work_height / orig_width
+        sx_rot = sy_rot * phys_ratio
 
-        # 判断是否需要旋转：选择畸变率更低的方向
+        # 判断是否需要旋转：选输出更大的方向（scale_y更大=物理输出更大）
         rotated = False
         if auto_rotate:
-            # 畸变率 = max(sx/sy, sy/sx)，越接近1越好
-            distortion_no_rot = max(sx_no_rot / sy_no_rot, sy_no_rot / sx_no_rot) if sy_no_rot > 0 and sx_no_rot > 0 else float('inf')
-            distortion_rot = max(sx_rot / sy_rot, sy_rot / sx_rot) if sy_rot > 0 and sx_rot > 0 else float('inf')
-            if distortion_rot < distortion_no_rot * 0.99:  # 1%容差
+            if sy_rot > sy_no_rot * 1.01:  # 1%容差
                 rotated = True
 
         scale_x = sx_rot if rotated else sx_no_rot
