@@ -2,6 +2,7 @@ import re
 
 from aipathcut.core.gcode_generator import GCodeGenerator
 from aipathcut.core.outline_extractor import OutlineExtractor
+from aipathcut.core.transform_utils import build_closure_detour
 
 
 def parse_gcode(gcode_text):
@@ -47,11 +48,14 @@ def main():
         if len(contour) < 2:
             continue
 
-        start = contour[0][0]
-        expected_points.append(ggen._transform_point(start, cx, cy, scale_x, scale_y))
+        machine_points = [
+            ggen._transform_point(point[0], cx, cy, scale_x, scale_y)
+            for point in contour
+        ]
+        expected_points.append(machine_points[0])
         for point in contour[1:]:
             expected_points.append(ggen._transform_point(point[0], cx, cy, scale_x, scale_y))
-        expected_points.append(ggen._transform_point(start, cx, cy, scale_x, scale_y))
+        expected_points.extend(build_closure_detour(machine_points, ggen.CLOSURE_OVERSHOOT_MM))
 
     print("Expected points:", len(expected_points))
     if expected_points and gcode_points:

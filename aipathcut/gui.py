@@ -512,6 +512,18 @@ class OutlineApp:
         """只更新偏移距离，不重新提取轮廓"""
         self._render_preview()
 
+    def _get_offset_contours(self):
+        """Return contours after applying the current UI offset."""
+        offset_distance = self.offset_var.get()
+        return self.extractor.offset_contours(self.processed_contours, offset_distance)
+
+    def _build_cut_geometry_from_ui(self):
+        """Build the actual cutting geometry from the current UI values."""
+        contours = self._get_offset_contours()
+        target_width = float(self.target_width_var.get())
+        target_height = float(self.target_height_var.get())
+        return self.gcode_gen.build_geometry(contours, target_width, target_height)
+
     def _render_preview(self):
         """渲染预览图（应用偏移）"""
         if not self.processed_contours:
@@ -638,10 +650,11 @@ class OutlineApp:
 
                 # 应用偏移
                 offset_distance = self.offset_var.get()
-                contours = self.extractor.offset_contours(self.processed_contours, offset_distance)
+                contours = self._get_offset_contours()
 
                 # 生成G代码（自动缩放到目标尺寸）
                 self.gcode_gen.feed_rate = feed_rate
+                self.gcode_gen.build_geometry(contours, target_width, target_height)
                 self.gcode_gen.save_to_file(
                     contours,
                     filepath,
@@ -788,11 +801,9 @@ class OutlineApp:
             target_width = float(self.target_width_var.get())
             target_height = float(self.target_height_var.get())
             feed_rate = int(self.gcode_feed_var.get())
-            offset_distance = self.offset_var.get()
-
-            contours = self.extractor.offset_contours(self.processed_contours, offset_distance)
-
+            contours = self._get_offset_contours()
             self.gcode_gen.feed_rate = feed_rate
+            self.gcode_gen.build_geometry(contours, target_width, target_height)
             self.gcode_gen.save_to_file(
                 contours, gcode_path,
                 self.original_width, self.original_height,
@@ -852,7 +863,7 @@ class OutlineApp:
                     return
 
                 offset_distance = self.offset_var.get()
-                contours = self.extractor.offset_contours(self.processed_contours, offset_distance)
+                contours = self._get_offset_contours()
 
                 # 先生成切割G-code以获取转换参数（如果还没有的话）
                 if self.gcode_gen.last_transform_params is None:
@@ -861,7 +872,7 @@ class OutlineApp:
                     feed_rate = int(self.gcode_feed_var.get())
                     self.gcode_gen.feed_rate = feed_rate
                     # 临时生成以计算转换参数
-                    self.gcode_gen.generate(contours, 0, 0, target_width, target_height, self.swap_xz_var.get())
+                    self.gcode_gen.build_geometry(contours, target_width, target_height)
 
                 # 将切割时的转换参数传递给填充生成器，确保填充区域与切割区域完全一致
                 self.fill_gen.set_transform_params(self.gcode_gen.get_transform_params())
@@ -896,8 +907,7 @@ class OutlineApp:
                 fill_interval = float(self.fill_interval_var.get())
                 y_offset = float(self.y_offset_var.get())
                 z_depth = float(self.fill_z_depth_var.get())
-                offset_distance = self.offset_var.get()
-                contours = self.extractor.offset_contours(self.processed_contours, offset_distance)
+                contours = self._get_offset_contours()
 
                 # 先生成切割G-code以获取转换参数（如果还没有的话）
                 if self.gcode_gen.last_transform_params is None:
@@ -906,7 +916,7 @@ class OutlineApp:
                     feed_rate = int(self.gcode_feed_var.get())
                     self.gcode_gen.feed_rate = feed_rate
                     # 临时生成以计算转换参数
-                    self.gcode_gen.generate(contours, 0, 0, target_width, target_height, self.swap_xz_var.get())
+                    self.gcode_gen.build_geometry(contours, target_width, target_height)
 
                 # 将切割时的转换参数传递给填充生成器，确保填充区域与切割区域完全一致
                 self.fill_gen.set_transform_params(self.gcode_gen.get_transform_params())

@@ -4,6 +4,7 @@
 import numpy as np
 
 from aipathcut.core.gcode_generator import GCodeGenerator
+from aipathcut.core.transform_utils import build_closure_detour
 
 
 def make_l_shape():
@@ -66,6 +67,26 @@ def main():
     print(f"\nPaper center: X={paper_center[0]:.3f}, Y={paper_center[1]:.3f}")
     print(f"Path points count: {len(points)}")
 
+    expected_points = []
+    params = gen.last_transform_params
+    cx = params["center_x_pixel"]
+    cy = params["center_y_pixel"]
+    sx = params["scale_x"]
+    sy = params["scale_y"]
+    rotated = params["rotated"]
+    work_contours = gen._densify_contours(params["work_contours"], sx, sy)
+
+    for work_contour in work_contours:
+        if len(work_contour) < 2:
+            continue
+        machine_points = [
+            gen._transform_point(point[0], cx, cy, sx, sy)
+            for point in work_contour
+        ]
+        expected_points.append(machine_points[0])
+        expected_points.extend(machine_points[1:])
+        expected_points.extend(build_closure_detour(machine_points, gen.CLOSURE_OVERSHOOT_MM))
+
     if len(points) >= 2:
         start = points[0]
         end = points[-1]
@@ -78,13 +99,6 @@ def main():
             print("  PASS: Path is closed")
         else:
             print("  FAIL: Path is NOT closed")
-
-    params = gen.last_transform_params
-    cx = params["center_x_pixel"]
-    cy = params["center_y_pixel"]
-    sx = params["scale_x"]
-    sy = params["scale_y"]
-    rotated = params["rotated"]
 
     print("\nTransform params:")
     print(f"  Rotated: {rotated}")
@@ -130,6 +144,15 @@ def main():
     print("\n--- Gcode path points ---")
     for i, p in enumerate(points[:50]):
         print(f"  Point {i}: X={p[0]:.3f}, Y={p[1]:.3f}")
+
+    if expected_points:
+        diff_count = sum(
+            1
+            for a, b in zip(points, expected_points)
+            if not same_point(a, b)
+        )
+        print(f"\nExpected points: {len(expected_points)}")
+        print(f"Sample diff count: {diff_count}")
 
     print("\n" + "=" * 60)
     print("Diagnostic complete")

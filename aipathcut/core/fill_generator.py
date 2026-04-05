@@ -4,11 +4,7 @@ from __future__ import annotations
 
 from typing import List
 
-from aipathcut.core.transform_utils import (
-    calculate_transform,
-    get_contours_bounds,
-    rotate_contours_90,
-)
+from aipathcut.core.transform_utils import build_toolpath_geometry, get_contours_bounds, rotate_contours_90
 
 
 class FillGenerator:
@@ -22,6 +18,7 @@ class FillGenerator:
 
     MM_PER_GCODE_X = 76.0 / 9.0
     MM_PER_GCODE_Y = 50.0 / 300.0
+    SCALE_FACTOR = 0.8
 
     def __init__(self, feed_rate=1000, paper_center_x=5.8, paper_center_y=-150):
         self.feed_rate = feed_rate
@@ -37,6 +34,36 @@ class FillGenerator:
 
     def set_transform_params(self, params):
         self.external_transform_params = params
+
+    def build_geometry(self, contours, target_width=0, target_height=0):
+        """Build shared fill geometry, reusing cutting transform when available."""
+        if self.external_transform_params:
+            geometry = dict(self.external_transform_params)
+            geometry["paper_center_x"] = self.paper_center_x
+            geometry["paper_center_y"] = self.paper_center_y
+            return geometry
+
+        if target_width <= 0:
+            target_width = self.UI_BASE_WIDTH
+        if target_height <= 0:
+            target_height = self.UI_BASE_HEIGHT
+
+        return build_toolpath_geometry(
+            contours,
+            target_width,
+            target_height,
+            self.UI_BASE_WIDTH,
+            self.UI_BASE_HEIGHT,
+            self.GCODE_BASE_WIDTH,
+            self.GCODE_BASE_HEIGHT,
+            self.MM_PER_GCODE_X,
+            self.MM_PER_GCODE_Y,
+            self.paper_center_x,
+            self.paper_center_y,
+            auto_rotate=True,
+            scale_factor=self.SCALE_FACTOR,
+            closure_overshoot_mm=0.0,
+        )
 
     def _find_vertical_intersections(self, fixed_x, contours):
         intersections = []
@@ -59,26 +86,15 @@ class FillGenerator:
         return sorted(intersections)
 
     def _calculate_scale_and_center(self, contours, ui_width, ui_height, auto_rotate=True):
-        params = calculate_transform(
-            contours,
-            ui_width,
-            ui_height,
-            self.UI_BASE_WIDTH,
-            self.UI_BASE_HEIGHT,
-            self.GCODE_BASE_WIDTH,
-            self.GCODE_BASE_HEIGHT,
-            self.MM_PER_GCODE_X,
-            self.MM_PER_GCODE_Y,
-            auto_rotate=auto_rotate,
-        )
+        geometry = self.build_geometry(contours, ui_width, ui_height)
         return (
-            params["scale_x"],
-            params["scale_y"],
-            params["center_x_pixel"],
-            params["center_y_pixel"],
-            params["gcode_work_width"],
-            params["gcode_work_height"],
-            params["rotated"],
+            geometry["scale_x"],
+            geometry["scale_y"],
+            geometry["center_x_pixel"],
+            geometry["center_y_pixel"],
+            geometry["gcode_work_width"],
+            geometry["gcode_work_height"],
+            geometry["rotated"],
         )
 
     def _emit_move(self, x, y, swap_xz=False, rapid=False):
@@ -89,43 +105,17 @@ class FillGenerator:
 
     def generate(self, contours, fill_interval, y_offset, z_depth, target_width=0, target_height=0, swap_xz=False):
         """Generate fill G-code using the shared contour transform."""
-        if target_width <= 0:
-            target_width = self.UI_BASE_WIDTH
-        if target_height <= 0:
-            target_height = self.UI_BASE_HEIGHT
+        geometry = self.build_geometry(contours, target_width, target_height)
 
-        if self.external_transform_params:
-            params = dict(self.external_transform_params)
-        else:
-            params = calculate_transform(
-                contours,
-                target_width,
-                target_height,
-                self.UI_BASE_WIDTH,
-                self.UI_BASE_HEIGHT,
-                self.GCODE_BASE_WIDTH,
-                self.GCODE_BASE_HEIGHT,
-                self.MM_PER_GCODE_X,
-                self.MM_PER_GCODE_Y,
-                auto_rotate=True,
-            )
-            params["scale_x"] *= 0.64
-            params["scale_y"] *= 0.64
+        scale_x = geometry["scale_x"]
+        scale_y = geometry["scale_y"]
+        center_x_pixel = geometry["center_x_pixel"]
+        center_y_pixel = geometry["center_y_pixel"]
+        work_contours = geometry["work_contours"]
 
-        scale_x = params["scale_x"]
-        scale_y = params["scale_y"]
-        center_x_pixel = params["center_x_pixel"]
-        center_y_pixel = params["center_y_pixel"]
-        if self.external_transform_params:
-            work_contours = params.get("work_contours", contours)
-        else:
-            work_contours = params["work_contours"]
-
-        # Keep the scan spacing in contour space so it respects the same
-        # non-uniform machine calibration as cutting.
         x_interval_pixels = fill_interval / (scale_x * self.MM_PER_GCODE_X) if scale_x > 0 else fill_interval
 
-        min_x, max_x, min_y, max_y = self._get_contours_bounds(work_contours)
+        min_x, max_x, _, _ = self._get_contours_bounds(work_contours)
         scan_min_x = min_x - x_interval_pixels
         scan_max_x = max_x + x_interval_pixels
 
