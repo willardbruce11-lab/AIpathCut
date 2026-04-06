@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import List
 
+from aipathcut.core.toolpath_pipeline import ToolpathConfig, build_geometry, emit_cut_gcode
 from aipathcut.core.transform_utils import (
-    build_toolpath_geometry,
     densify_contours,
     get_contours_bounds,
     rotate_contours_90,
@@ -63,31 +63,37 @@ class GCodeGenerator:
     def get_transform_params(self):
         return self.last_transform_params
 
-    def build_geometry(self, contours, target_width=0, target_height=0):
-        """Build the shared intermediate toolpath geometry."""
+    def _resolve_target_size(self, target_width, target_height):
         if target_width <= 0:
             target_width = self.UI_BASE_WIDTH
         if target_height <= 0:
             target_height = self.UI_BASE_HEIGHT
+        return float(target_width), float(target_height)
 
-        geometry = build_toolpath_geometry(
-            contours,
-            target_width,
-            target_height,
-            self.UI_BASE_WIDTH,
-            self.UI_BASE_HEIGHT,
-            self.GCODE_BASE_WIDTH,
-            self.GCODE_BASE_HEIGHT,
-            self.MM_PER_GCODE_X,
-            self.MM_PER_GCODE_Y,
-            self.paper_center_x,
-            self.paper_center_y,
-            auto_rotate=True,
+    def build_config(self, target_width=0, target_height=0):
+        """Build a canonical contour-to-machine config for cutting."""
+        target_width, target_height = self._resolve_target_size(target_width, target_height)
+        return ToolpathConfig(
+            target_width_mm=target_width,
+            target_height_mm=target_height,
+            paper_center_x=self.paper_center_x,
+            paper_center_y=self.paper_center_y,
+            mm_per_gcode_x=self.MM_PER_GCODE_X,
+            mm_per_gcode_y=self.MM_PER_GCODE_Y,
             scale_factor=self.SCALE_FACTOR,
+            auto_rotate=True,
             closure_overshoot_mm=self.CLOSURE_OVERSHOOT_MM,
+            ui_base_width=self.UI_BASE_WIDTH,
+            ui_base_height=self.UI_BASE_HEIGHT,
+            gcode_base_width=self.GCODE_BASE_WIDTH,
+            gcode_base_height=self.GCODE_BASE_HEIGHT,
         )
-        self.last_transform_params = geometry
-        return geometry
+
+    def build_geometry(self, contours, target_width=0, target_height=0):
+        """Build the shared intermediate toolpath geometry."""
+        geometry = build_geometry(contours, self.build_config(target_width, target_height))
+        self.last_transform_params = geometry.as_dict()
+        return self.last_transform_params
 
     def _calculate_scale_and_center(self, contours, ui_width, ui_height, auto_rotate=True):
         geometry = self.build_geometry(contours, ui_width, ui_height)
@@ -108,40 +114,9 @@ class GCodeGenerator:
 
     def generate(self, contours, image_width=0, image_height=0, target_width=0, target_height=0, swap_xz=False):
         """Generate cutting G-code."""
-        geometry = self.build_geometry(contours, target_width, target_height)
-
-        gcode_lines: List[str] = []
-        gcode_lines.append("G21")
-        gcode_lines.append("G90")
-        gcode_lines.append(f"F{self.feed_rate}")
-        gcode_lines.append("")
-        if swap_xz:
-            gcode_lines.append("G92 Z0 Y0")
-            gcode_lines.append(f"G1 Z{self.paper_center_x:.3f} Y{self.paper_center_y:.3f}")
-        else:
-            gcode_lines.append("G92 X0 Y0")
-            gcode_lines.append(f"G1 X{self.paper_center_x:.3f} Y{self.paper_center_y:.3f}")
-        gcode_lines.append("")
-
-        for path in geometry["machine_closed_paths"]:
-            if len(path) < 2:
-                continue
-            start_x, start_y = path[0]
-            gcode_lines.append(self._emit_move(start_x, start_y, swap_xz))
-            gcode_lines.append("M8")
-            for x, y in path[1:]:
-                gcode_lines.append(self._emit_move(x, y, swap_xz))
-            gcode_lines.append("M9")
-            gcode_lines.append("")
-
-        gcode_lines.append("")
-        if swap_xz:
-            gcode_lines.append("G1 Z20 Y0")
-        else:
-            gcode_lines.append("G1 X20 Y0")
-        gcode_lines.append("")
-
-        return "\n".join(gcode_lines)
+        geometry = build_geometry(contours, self.build_config(target_width, target_height))
+        self.last_transform_params = geometry.as_dict()
+        return emit_cut_gcode(geometry, self.feed_rate, swap_xz=swap_xz)
 
     def save_to_file(
         self,

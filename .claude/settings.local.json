@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(wsl:*)",
+      "Bash(dir E:)",
+      "Bash(npm update:*)",
+      "Bash(claude:*)",
+      "Bash(move:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(where:*)",
+      "Bash(D:EspressiftoolsEspressiftoolsidf-python3.11.2python.exe:*)",
+      "Bash(git -C \"E:\\\\AIpathcut\" status)",
+      "Bash(git -C \"E:\\\\AIpathcut\" diff)",
+      "Bash(git -C \"E:\\\\AIpathcut\" log:*)",
+      "Bash(git -C \"E:\\\\AIpathcut\" add:*)",
+      "Bash(git -C \"E:\\\\AIpathcut\" commit:*)",
+      "Bash(git -C \"E:\\\\AIpathcut\" push)",
+      "Bash(git fetch:*)",
+      "Bash(git reset:*)"
+    ]
+  }
+}

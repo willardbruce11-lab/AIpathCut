@@ -5,9 +5,19 @@
 """
 import cv2
 import numpy as np
+from dataclasses import dataclass
 from typing import Tuple, List, Optional
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.ops import unary_union
+
+
+@dataclass
+class OutlineData:
+    """Extracted contour set with its source image size."""
+
+    width: int
+    height: int
+    contours: List[np.ndarray]
 
 
 class OutlineExtractor:
@@ -367,15 +377,36 @@ class OutlineExtractor:
         Returns:
             (width, height, contours) 图片尺寸和轮廓列表
         """
+        outline = self.extract_outline_data(
+            image_path,
+            smooth=smooth,
+            simplify_factor=simplify_factor,
+        )
+        return outline.width, outline.height, outline.contours
+
+    def extract_outline_data(
+        self,
+        image_path: str,
+        smooth: bool = True,
+        simplify_factor: float = 0.001,
+    ) -> OutlineData:
+        """Extract contours as a structured outline result."""
         image = self.load_image(image_path)
         height, width = image.shape[:2]
 
         contours = self.extract_contours(image)
-
         if smooth:
             contours = [self.smooth_contour(c, simplify_factor) for c in contours]
 
-        return width, height, contours
+        return OutlineData(width=width, height=height, contours=contours)
+
+    def offset_outline(self, outline: OutlineData, offset_distance: float) -> OutlineData:
+        """Apply the UI offset to an extracted outline."""
+        return OutlineData(
+            width=outline.width,
+            height=outline.height,
+            contours=self.offset_contours(outline.contours, offset_distance),
+        )
 
     def preview_outline(self, image_path: str,
                        output_path: Optional[str] = None) -> np.ndarray:
